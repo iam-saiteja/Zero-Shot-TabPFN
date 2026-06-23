@@ -260,15 +260,15 @@ def main():
 
     # 2. Benchmark scaling on large synthetic SCM datasets
     print("\n--- Phase 5: Scaling Benchmark on Synthetic SCM Datasets ---")
-    sizes = []  # Skipped for fast CPU evaluation
+    sizes = [1000, 2048, 4096, 8192]
     scaling_results = []
     
     for size in sizes:
         print(f"\nScaling Benchmark: N={size} rows...")
-        X, y = generate_scm_dataset(num_samples=size + 500, num_features=10, task_type="classification", num_classes=2, random_state=42)
+        X, y = generate_scm_dataset(num_samples=size + 100, num_features=10, task_type="classification", num_classes=2, random_state=42)
         X, y = preprocess_dataset(X, y)
-        X_train, X_test = X[:size], X[size:]
-        y_train, y_test = y[:size], y[size:]
+        X_train, X_test = X[:size], X[size:size+100]
+        y_train, y_test = y[:size], y[size:size+100]
         
         # We only benchmark speed/VRAM scaling metrics for:
         # - Vanilla TabPFN (full attention)
