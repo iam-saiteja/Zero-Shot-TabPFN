@@ -325,6 +325,7 @@ class AlongColumnAttentionMSA(AlongColumnAttention):
         # 1. Determine train size N
         N = R if single_eval_pos is None else single_eval_pos
 
+
         # 2. Get batch permutation for the train rows
         perm, inv_perm = self.get_batch_permutation(x_BcRE, N)
         batch_indices = torch.arange(Bc, device=device).unsqueeze(1).expand(Bc, N)
