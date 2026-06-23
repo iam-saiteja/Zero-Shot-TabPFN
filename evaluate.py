@@ -19,7 +19,7 @@ os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
 import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
 import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from tabpfn_msa import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB, AlongColumnAttentionTopKBlock
+from tabpfn_msa import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB
 from tabpfn import TabPFNClassifier
 from data_generator import generate_scm_dataset
 
@@ -87,17 +87,6 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
         tabpfn_v2.AlongColumnAttention = TempISAB
         tabpfn_v2_5.AlongColumnAttention = TempISAB
         tabpfn_v2_6.AlongColumnAttention = TempISAB
-        original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
-        tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
-    elif variant == "topk":
-        class TempTopK(AlongColumnAttentionTopKBlock):
-            def __init__(self, *args, **kwargs):
-                kwargs["block_size"] = 64
-                kwargs["topk_blocks"] = 4
-                super().__init__(*args, **kwargs)
-        tabpfn_v2.AlongColumnAttention = TempTopK
-        tabpfn_v2_5.AlongColumnAttention = TempTopK
-        tabpfn_v2_6.AlongColumnAttention = TempTopK
         original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
         tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
     elif variant == "msa":
@@ -227,11 +216,7 @@ def main():
             
             # ISAB Attention TabPFN
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab")
-            results.append({"Dataset": name, "Model": "ISAB_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-            
-            # TopK Block Attention TabPFN
-            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="topk")
-            results.append({"Dataset": name, "Model": "TopK_Block_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+            results.append({"Dataset": name, "Model": "Similarity_Sorted_ISAB_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
             
             # MSA TabPFN (Zero-shot, Random)
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="random")
@@ -288,12 +273,7 @@ def main():
         # ISAB Attention
         print("  Benchmarking ISAB Attention TabPFN...")
         _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab")
-        scaling_results.append({"Rows": size, "Model": "ISAB_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-        
-        # Top-K Block Attention
-        print("  Benchmarking Top-K Block Attention TabPFN...")
-        _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="topk")
-        scaling_results.append({"Rows": size, "Model": "TopK_Block_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+        scaling_results.append({"Rows": size, "Model": "Similarity_Sorted_ISAB_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
         
         # Partitioned Attention (Random grouping — O(N log N) sort, no quadratic overhead)
         print("  Benchmarking Partitioned Attention TabPFN (Random)...")
