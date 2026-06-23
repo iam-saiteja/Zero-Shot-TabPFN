@@ -82,7 +82,7 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
     elif variant == "isab":
         class TempISAB(AlongColumnAttentionISAB):
             def __init__(self, *args, **kwargs):
-                kwargs["num_prototypes"] = 32
+                kwargs["num_prototypes"] = 128
                 super().__init__(*args, **kwargs)
         tabpfn_v2.AlongColumnAttention = TempISAB
         tabpfn_v2_5.AlongColumnAttention = TempISAB
