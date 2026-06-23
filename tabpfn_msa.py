@@ -77,18 +77,10 @@ class AlongColumnAttentionISAB(AlongColumnAttention):
         device = train_rows.device
         M = self.num_prototypes
 
-        # PCA Projection
-        centered = train_rows - train_rows.mean(dim=1, keepdim=True)
-        try:
-            _, _, V = torch.linalg.svd(centered.to(torch.float32)) # SVD in float32 for stability
-            w_proj = V[:, :, 0].to(train_rows.dtype)  # [Bc, E] (first principal component)
-            proj = torch.bmm(train_rows, w_proj.unsqueeze(-1)).squeeze(-1)  # [Bc, N]
-            _, perm = torch.sort(proj, dim=-1)
-        except Exception:
-            # Fallback to similarity to batch mean if SVD fails to converge
-            mean_row = train_rows.mean(dim=1, keepdim=True)
-            proj = torch.bmm(train_rows, mean_row.transpose(-1, -2)).squeeze(-1)
-            _, perm = torch.sort(proj, dim=-1)
+        # Fast similarity projection to the batch mean representation (O(N) operation, avoids SVD)
+        mean_row = train_rows.mean(dim=1, keepdim=True)  # [Bc, 1, E]
+        proj = torch.bmm(train_rows, mean_row.transpose(-1, -2)).squeeze(-1)  # [Bc, N]
+        _, perm = torch.sort(proj, dim=-1)
 
         chunk_size = max(1, N // M)
         
