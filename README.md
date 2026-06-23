@@ -1,60 +1,42 @@
-# Permutation-Invariant Sparse & Induced Set Attention for Tabular Foundation Models
+# Dynamic Row Sub-sampling and Block-Sparse Attention for TabPFN
 
-This repository contains the implementation of **linear-complexity $O(N)$ row-attention** layers integrated into TabPFN's permutation-invariant tabular classification backbone. By replacing the default dense $O(N^2)$ row-wise self-attention, we enable TabPFN to scale to large context lengths (8,192+ rows) without out-of-memory (OOM) failures or execution bottlenecks on CPU and memory-constrained GPUs.
+This repository contains two primary scaling implementations integrated into TabPFN's permutation-invariant row-attention layers to handle large context lengths (8,192+ rows) on CUDA:
+
+1.  **`Partitioned_Attention_TabPFN`** (Block-Sparse): Evaluates query-specific top-K block attention via index-branch prediction.
+2.  **`Similarity_Sorted_Subsampled_TabPFN`** (Direct Row Sub-sampling): A linear-complexity approach that dynamically selects a globally-aligned subset of unmodified training rows as prototypes.
 
 ---
 
-## 🚀 Key Achievements & Results
+## 📊 CUDA Scaling Results ($N = 8,192$ rows)
 
-Our primary method, **`Similarity_Sorted_ISAB_TabPFN`** ($M=128$), bridges the gap between scalability and zero-shot predictive performance:
+When scaling to large synthetic contexts on GPU, the performance metrics are as follows:
 
-### 1. Classification Performance (Zero-Shot)
+| Model | Complexity | Time (s) | Peak VRAM (MB) | Note / Verdict |
+| :--- | :---: | :---: | :---: | :--- |
+| **Vanilla TabPFN** | $O(N^2)$ | 18.22 | 471.3 | Baseline |
+| **Linear Attention** | $O(N)$ | 9.39 | 344.3 | High accuracy loss |
+| **Similarity-Sorted Subsampled (Ours)** | $O(N \cdot M)$ | **6.70** | **257.6** | **Fastest, lowest VRAM** |
+| **Partitioned Attention (Block-Sparse)** | $O(N \cdot \text{blk\_kv})$ | **241.31** | **5523.75** | **Highly inefficient gather overhead** |
+
+### Why is Partitioned Attention Slow?
+Even though it reduces the theoretical FLOP count, the exact block gather step:
+```python
+flat_k_idx = batch_indices * (H * S_k_padded) + head_indices * S_k_padded + gather_indices
+k_gathered = k_flat[flat_k_idx]
+```
+requires a massive, non-contiguous memory gather operation across batches, heads, queries, and tokens. On GPU, this triggers uncoalesced memory reads, and on CPU, it lacks SIMD vectorization. Consequently, it runs **13x slower** and uses **11x more memory** than Vanilla TabPFN.
+
+---
+
+## 🛠️ Performance & Accuracy on Real Datasets
 
 | Dataset | Model | Accuracy | ROC AUC | Time (s) | Peak VRAM (MB) |
 | :--- | :--- | :---: | :---: | :---: | :---: |
-| **Breast Cancer** | Vanilla TabPFN | **0.9591** | 0.9969 | 1.98 | 144.0 |
-| | Similarity-Sorted ISAB | 0.9532 | **0.9973** | **1.10** | **106.4** |
-| **diabetes** | Vanilla TabPFN | 0.7446 | **0.8469** | 1.05 | 108.7 |
-| | Similarity-Sorted ISAB | **0.7489** | 0.8233 | **0.99** | **89.0** |
-| **credit-g** | Vanilla TabPFN | **0.7733** | **0.7903** | 2.33 | 183.3 |
-| | Similarity-Sorted ISAB | 0.7133 | 0.7377 | **1.28** | **113.0** |
+| **Breast Cancer** | Vanilla TabPFN | **0.9591** | 0.9969 | 2.89 | 144.0 |
+| | Similarity-Sorted Subsampled | 0.9532 | **0.9974** | **1.19** | **106.4** |
+| **diabetes** | Vanilla TabPFN | 0.7446 | **0.8469** | 1.11 | 108.7 |
+| | Similarity-Sorted Subsampled | **0.7489** | 0.8233 | **1.04** | **89.0** |
+| **credit-g** | Vanilla TabPFN | **0.7733** | **0.7903** | 2.40 | 183.3 |
+| | Similarity-Sorted Subsampled | 0.7133 | 0.7377 | **1.33** | **113.0** |
 
-### 2. Large Dataset Scaling (Synthetic SCM Datasets)
-
-| Rows ($N$) | Model | Time (s) | Peak VRAM (MB) | Scaling vs Vanilla |
-| :---: | :--- | :---: | :---: | :---: |
-| **1000** | Vanilla TabPFN | 1.36s | 124.6 | 1.0x (Baseline) |
-| | Similarity-Sorted ISAB | **0.99s** | **99.3** | **1.4x Faster** |
-| **4096** | Vanilla TabPFN | 7.11s | 272.8 | 1.0x (Baseline) |
-| | Similarity-Sorted ISAB | **3.39s** | **167.3** | **2.1x Faster** |
-| **8192** | Vanilla TabPFN | 17.76s | 471.3 | 1.0x (Baseline) |
-| | Similarity-Sorted ISAB | **6.46s** | **257.6** | **2.7x Faster, 1.8x Lower VRAM** |
-
----
-
-## 🛠️ Key Architectural Innovations
-
-1. **Globally Aligned Row Permutations**: Standard multi-head token sorting or row partitioning sorts features independently per column. For TabPFN's column-wise attention blocks, this scrambles feature correspondences. We resolved this by computing a Z-score normalized similarity projection across columns, averaging the projection scores, and applying a **single, globally aligned row permutation (`perm_base`)** across all columns.
-2. **Direct Row Sub-sampling**: Averaging clusters of rows to build prototypes acts as a low-pass filter, blurring decision boundaries and degrading zero-shot accuracy. We solved this by using **Direct Row Sub-sampling**: selecting actual, unmodified training rows as prototypes.
-3. **Distribution-Spanning linspace Indexing**: Instead of spacing indices using integer division (`N // M`), which misses the tail of the sorted elements, we use `torch.linspace(0, N - 1, steps=M).long()`. This guarantees that selected prototypes span the entire data distribution.
-
----
-
-## 📁 Repository Structure
-
-*   `tabpfn_msa.py`: Contains the sparse attention architectures:
-    *   `AlongColumnAttentionISAB`: Sub-sampled, globally aligned Induced Set Attention (O(N) complexity).
-    *   `AlongColumnAttentionTwoPass`: Soft-clustering based two-pass prototype attention.
-    *   `AlongColumnAttentionMSA`: Block-sparse row attention using `MiniMaxSparseAttentionPyTorch`.
-*   `evaluate.py`: The evaluation framework running real-dataset classifications and CPU scaling benchmarks.
-*   `msa_pytorch.py`: PyTorch fallback for block-sparse attention mechanics.
-
----
-
-## 💻 How to Run the Evaluation
-
-To evaluate accuracy and scaling performance:
-
-```bash
-.venv\Scripts\python evaluate.py
-```
+*Note: There remains a zero-shot accuracy gap of ~5.6% on `credit-g`. Fine-tuning the projection layers to adapt to the sub-sampling mechanics remains a direction for future work.*
