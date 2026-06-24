@@ -217,7 +217,7 @@ def main():
             
             # ISAB Attention TabPFN
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab")
-            results.append({"Dataset": name, "Model": "Similarity_Sorted_ISAB_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+            results.append({"Dataset": name, "Model": "ISAB-R (Ours)", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
             
             # MSA TabPFN (Zero-shot, Random)
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="random")
@@ -243,7 +243,7 @@ def main():
     print("\n==================== REAL DATASET RESULTS ====================")
     print(df_results.to_markdown(index=False))
     df_results.to_csv("real_dataset_evaluation_results.csv", index=False)
-
+ 
     # 2. Benchmark scaling on large synthetic SCM datasets
     print("\n--- Phase 5: Scaling Benchmark on Synthetic SCM Datasets ---")
     sizes = [1000, 2048, 4096, 8192]
@@ -259,7 +259,7 @@ def main():
         variants = {
             "Vanilla_TabPFN": ("vanilla", None),
             "Linear_Attention_TabPFN": ("linear", None),
-            "Similarity_Sorted_ISAB_TabPFN": ("isab", None),
+            "ISAB-R (Ours)": ("isab", None),
             "Partitioned_Attention_TabPFN": ("msa", "random")
         }
         
