@@ -80,7 +80,8 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
         tabpfn_v2_5.AlongColumnAttention = AlongColumnAttentionLinear
         tabpfn_v2_6.AlongColumnAttention = AlongColumnAttentionLinear
     elif variant == "isab":
-        class TempISAB(AlongColumnAttentionISAB):
+        from tabpfn_msa import AlongColumnAttentionTwoPass
+        class TempISAB(AlongColumnAttentionTwoPass):
             def __init__(self, *args, **kwargs):
                 kwargs["num_prototypes"] = 128
                 super().__init__(*args, **kwargs)
@@ -255,35 +256,53 @@ def main():
         X_train, X_test = X[:size], X[size:size+100]
         y_train, y_test = y[:size], y[size:size+100]
         
-        # We only benchmark speed/VRAM scaling metrics for:
-        # - Vanilla TabPFN (full attention)
-        # - Linear Attention TabPFN
-        # - MSA TabPFN (Similarity)
+        variants = {
+            "Vanilla_TabPFN": ("vanilla", None),
+            "Linear_Attention_TabPFN": ("linear", None),
+            "Similarity_Sorted_ISAB_TabPFN": ("isab", None),
+            "Partitioned_Attention_TabPFN": ("msa", "random")
+        }
         
-        # Vanilla
-        print("  Benchmarking Vanilla TabPFN...")
-        _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla")
-        scaling_results.append({"Rows": size, "Model": "Vanilla_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-        
-        # Linear
-        print("  Benchmarking Linear Attention TabPFN...")
-        _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="linear")
-        scaling_results.append({"Rows": size, "Model": "Linear_Attention_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-        
-        # ISAB Attention
-        print("  Benchmarking ISAB Attention TabPFN...")
-        _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab")
-        scaling_results.append({"Rows": size, "Model": "Similarity_Sorted_ISAB_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-        
-        # Partitioned Attention (Random grouping — O(N log N) sort, no quadratic overhead)
-        print("  Benchmarking Partitioned Attention TabPFN (Random)...")
-        _, _, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="random")
-        scaling_results.append({"Rows": size, "Model": "Partitioned_Attention_TabPFN", "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+        for model_name, (variant, strategy) in variants.items():
+            print(f"  Benchmarking {model_name}...")
+            times = []
+            vrams = []
+            accs = []
+            aucs = []
+            # Run 3 times for stats stability
+            for run_i in range(3):
+                acc, auc, elapsed, vram = evaluate_tabpfn_variant(
+                    X_train, X_test, y_train, y_test, 
+                    variant=variant, msa_strategy=strategy
+                )
+                times.append(elapsed)
+                vrams.append(vram)
+                accs.append(acc)
+                aucs.append(auc)
+            
+            mean_time = np.mean(times)
+            std_time = np.std(times)
+            mean_vram = np.mean(vrams)
+            std_vram = np.std(vrams)
+            mean_acc = np.mean(accs)
+            mean_auc = np.mean(aucs)
+            
+            scaling_results.append({
+                "Rows": size, 
+                "Model": model_name, 
+                "Accuracy": mean_acc,
+                "ROC_AUC": mean_auc,
+                "Time Mean (s)": mean_time, 
+                "Time Std (s)": std_time, 
+                "Peak VRAM Mean (MB)": mean_vram,
+                "Peak VRAM Std (MB)": std_vram
+            })
         
     df_scaling = pd.DataFrame(scaling_results)
     print("\n==================== SCALING SCENARIO RESULTS ====================")
     print(df_scaling.to_markdown(index=False))
     df_scaling.to_csv("scaling_evaluation_results.csv", index=False)
+
 
 if __name__ == "__main__":
     main()

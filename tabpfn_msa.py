@@ -137,32 +137,11 @@ class AlongColumnAttentionISAB(AlongColumnAttention):
 
 class AlongColumnAttentionTwoPass(AlongColumnAttention):
     """
-    Two-Pass Prototype Attention — soft-clustering based refinement.
+    Two-Pass Prototype Attention — soft-clustering based refinement with Logit Scaling & Norm Alignment.
 
-    Single-pass ISAB fails because chunk-mean prototypes lose fine-grained
-    information (rare classes, decision boundaries get averaged away).
-
-    Fix: add a COMPRESS pass where prototype clusters compute soft assignment
-    probabilities over the training set, then compute cluster centroids directly
-    in the key and value spaces. This preserves minority-class details
-    by grouping them into separate prototypes.
-
-    Architecture (O(N×M) total, two attention/matmul steps, 0 new parameters):
-
-        Pass 1 — Compress (Soft Clustering) [O(M × N)]:
-            q_p = q_projection(proto_init)    — [Bc, H, M, D]
-            k_r = k_projection(train_rows)    — [Bc, H, N, D]
-            v_r = v_projection(train_rows)    — [Bc, H, N, D]
-            attn_weights = softmax(q_p @ k_r^T) — [Bc, H, M, N]
-            k_refined = attn_weights @ k_r    — [Bc, H, M, D]
-            v_refined = attn_weights @ v_r    — [Bc, H, M, D]
-
-        Pass 2 — Broadcast [O(N × M)]:
-            q = q_projection(all_rows)        — [Bc, H, R, D]
-            output = FlashAttn(q, k_refined, v_refined)
-
-    No new parameters are introduced. Zero-shot compatibility is perfect
-    because all operations stay inside the trained projection manifold.
+    Compress Pass (Pass 1): Soft assignment of training rows to M prototypes.
+    Refinement Pass (Pass 2): Centroid calculation in K/V space.
+    Broadcast Pass (Pass 3): All queries attend to refined prototypes.
     """
 
     def __init__(
@@ -171,28 +150,34 @@ class AlongColumnAttentionTwoPass(AlongColumnAttention):
         num_heads: int,
         head_dim: int,
         num_prototypes: int = 32,
+        use_logit_scaling: bool = True,
+        use_norm_alignment: bool = True,
         device: torch.device | str | None = None,
         dtype: torch.dtype | str | None = None,
     ):
         super().__init__(embedding_size, num_heads, head_dim, device=device, dtype=dtype)
         self.num_prototypes = num_prototypes
+        self.use_logit_scaling = use_logit_scaling
+        self.use_norm_alignment = use_norm_alignment
 
     def load_state_dict(self, state_dict, strict: bool = True):
-        # Load vanilla TabPFN weights (strict=False: new/missing params are fine)
+        # Load vanilla TabPFN weights
         return super().load_state_dict(state_dict, strict=False)
 
     @staticmethod
     def _chunk_means(train_rows: torch.Tensor, M: int) -> torch.Tensor:
         """Randomly partition N training rows into M chunks; return chunk means."""
         Bc, N, E = train_rows.shape
-        perm = torch.randperm(N, device=train_rows.device)
+        device = train_rows.device
+        perm = torch.randperm(N, device=device)
         chunk_size = max(1, N // M)
-        protos = []
-        for i in range(M):
-            s, e = i * chunk_size, min((i + 1) * chunk_size, N)
-            if s >= N: s, e = 0, chunk_size
-            protos.append(train_rows[:, perm[s:e]].mean(dim=1))  # [Bc, E]
-        return torch.stack(protos, dim=1)  # [Bc, M, E]
+        
+        num_elements = M * chunk_size
+        selected_perm = perm[:num_elements]
+        
+        gathered = train_rows[:, selected_perm]  # [Bc, M * chunk_size, E]
+        gathered = gathered.view(Bc, M, chunk_size, E)
+        return gathered.mean(dim=2)  # [Bc, M, E]
 
     def forward(
         self,
@@ -203,39 +188,81 @@ class AlongColumnAttentionTwoPass(AlongColumnAttention):
         return_kv: bool = False,
     ) -> tuple[torch.Tensor, KVCacheEntry | None]:
         Bc, R, E = x_BcRE.shape
-        N = R if single_eval_pos is None else single_eval_pos
         H, D, M = self.num_heads, self.head_dim, self.num_prototypes
+
+        q_BcRHD = self.q_projection(x_BcRE).view(Bc, R, H, D)
+
+        if cached_kv is not None:
+            k_Bc1 = cached_kv.key
+            v_Bc1 = cached_kv.value
+            assert k_Bc1 is not None
+            assert v_Bc1 is not None
+            if k_Bc1.dtype != q_BcRHD.dtype:
+                k_Bc1 = k_Bc1.to(q_BcRHD.dtype)
+                v_Bc1 = v_Bc1.to(q_BcRHD.dtype)
+            
+            from tabpfn.architectures.shared.scaled_dot_product_attention import scaled_dot_product_attention
+            output_BcSHD = scaled_dot_product_attention(q_BcRHD, k_Bc1, v_Bc1)
+            return self.out_projection(output_BcSHD.reshape(Bc, R, H * D)), None
+
+        N = R if single_eval_pos is None else single_eval_pos
         train_rows = x_BcRE[:, :N]  # [Bc, N, E]
 
-        # ── Step 1: Initialize prototype representations ────────────────────
-        proto_init = self._chunk_means(train_rows, M)  # [Bc, M, E]
+        # Fallback to vanilla self-attention if train size is smaller than or equal to M
+        if N <= M:
+            k_refined = self.k_projection(train_rows).view(Bc, N, H, D)
+            v_refined = self.v_projection(train_rows).view(Bc, N, H, D)
+        else:
+            proto_init = self._chunk_means(train_rows, M)  # [Bc, M, E]
+            
+            if self.use_norm_alignment:
+                train_mean = train_rows.mean(dim=1, keepdim=True)
+                train_std = train_rows.std(dim=1, keepdim=True).clamp(min=1e-6)
+                proto_mean = proto_init.mean(dim=1, keepdim=True)
+                proto_std = proto_init.std(dim=1, keepdim=True).clamp(min=1e-6)
+                proto_init = (proto_init - proto_mean) / proto_std * train_std + train_mean
+                
+            q_p = self.q_projection(proto_init).view(Bc, M, H, D).transpose(1, 2)  # [Bc, H, M, D]
+            k_r = self.k_projection(train_rows).view(Bc, N, H, D).transpose(1, 2)  # [Bc, H, N, D]
+            v_r = self.v_projection(train_rows).view(Bc, N, H, D).transpose(1, 2)  # [Bc, H, N, D]
 
-        # ── Step 2: COMPRESS (Soft Clustering in Projection Space) ──────────
-        q_p = self.q_projection(proto_init).view(Bc, M, H, D).transpose(1, 2)  # [Bc, H, M, D]
-        k_r = self.k_projection(train_rows).view(Bc, N, H, D).transpose(1, 2)  # [Bc, H, N, D]
-        v_r = self.v_projection(train_rows).view(Bc, N, H, D).transpose(1, 2)  # [Bc, H, N, D]
+            attn_weights = F.softmax(torch.matmul(q_p, k_r.transpose(-2, -1)) / math.sqrt(D), dim=-1)
+            k_refined = torch.matmul(attn_weights, k_r).transpose(1, 2).contiguous()
+            v_refined = torch.matmul(attn_weights, v_r).transpose(1, 2).contiguous()
 
-        # Soft attention weights over the training rows: [Bc, H, M, N]
-        attn_weights = F.softmax(torch.matmul(q_p, k_r.transpose(-2, -1)) / math.sqrt(D), dim=-1)
-
-        # Compute cluster centroids in Key and Value spaces: [Bc, H, M, D]
-        k_refined = torch.matmul(attn_weights, k_r)
-        v_refined = torch.matmul(attn_weights, v_r)
-
-        # ── Step 3: BROADCAST — all queries attend to refined prototypes ────
-        q = self.q_projection(x_BcRE).view(Bc, R, H, D).transpose(1, 2)        # [Bc, H, R, D]
-
-        out = F.scaled_dot_product_attention(q, k_refined, v_refined)          # [Bc, H, R, D]
-        out = out.transpose(1, 2).reshape(Bc, R, H * D)                        # [Bc, R, E]
+        # Broadcast
+        from tabpfn.architectures.shared.scaled_dot_product_attention import scaled_dot_product_attention
+        
+        if single_eval_pos == R:
+            if self.use_logit_scaling and N > M:
+                scale_factor = math.sqrt(math.log(N) / math.log(M))
+                q_BcRHD = q_BcRHD * scale_factor
+            output_BcSHD = scaled_dot_product_attention(q_BcRHD, k_refined, v_refined)
+        else:
+            if self.use_logit_scaling and N > M:
+                scale_factor = math.sqrt(math.log(N) / math.log(M))
+                q_train = q_BcRHD[:, :N] * scale_factor
+                q_test = q_BcRHD[:, N:] * scale_factor
+            else:
+                q_train = q_BcRHD[:, :N]
+                q_test = q_BcRHD[:, N:]
+                
+            out_train_BcNHD = scaled_dot_product_attention(
+                q_train, k_refined, v_refined
+            )
+            out_test_BcMHD = scaled_dot_product_attention(
+                q_test, k_refined[:, :, :1], v_refined[:, :, :1]
+            )
+            output_BcSHD = torch.cat([out_train_BcNHD, out_test_BcMHD], dim=1)
 
         kv_entry: KVCacheEntry | None = None
         if return_kv:
             kv_entry = KVCacheEntry(
-                key=k_refined.transpose(1, 2)[:, :, :1].contiguous().detach(),
-                value=v_refined.transpose(1, 2)[:, :, :1].contiguous().detach(),
+                key=k_refined[:, :, :1].contiguous().detach(),
+                value=v_refined[:, :, :1].contiguous().detach(),
             )
 
-        return self.out_projection(out), kv_entry
+        return self.out_projection(output_BcSHD.reshape(Bc, R, H * D)), kv_entry
 
 
 
