@@ -1,5 +1,7 @@
 import os
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import torch
 import time
 
@@ -31,7 +33,7 @@ def _chunk_means_loop(train_rows, M):
         protos.append(train_rows[:, perm[s:e]].mean(dim=1))
     return torch.stack(protos, dim=1)
 
-# 4. VECTORIZED IMPLEMENTATION (ISAB-R Core Optimization)
+# 4. VECTORIZED IMPLEMENTATION (Zero-Shot ISAB Core Optimization)
 # This vectorized chunk-averaging implementation avoids loops completely.
 # It slices the permutation array down to the nearest multiple of M (M * chunk_size),
 # gathers all elements at once using advanced indexing (avoiding launch overhead),

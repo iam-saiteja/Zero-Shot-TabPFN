@@ -4,7 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import time
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 # 1. DYNAMIC SYSTEM PATH INCLUSION
 # Dynamically locate the project root relative to the directory containing this script.
@@ -22,7 +24,7 @@ import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
 import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
 from tabpfn_msa import AlongColumnAttentionTwoPass
 from tabpfn import TabPFNClassifier
-from data_generator import generate_scm_dataset
+from zsisab.data_generator import generate_scm_dataset
 from evaluate import preprocess_dataset, clear_gpu
 from sklearn.metrics import accuracy_score, roc_auc_score
 
@@ -30,20 +32,20 @@ def run_isab_benchmark(size):
     # Ensure a clean slate on GPU memory before running the benchmark
     clear_gpu()
     
-    # 2. ISAB-R HYPERPARAMETER & ARCHITECTURE PATCHING
-    # We dynamically patch the TabPFN attention layers to use our AlongColumnAttentionTwoPass (ISAB-R).
+    # 2. Zero-Shot ISAB HYPERPARAMETER & ARCHITECTURE PATCHING
+    # We dynamically patch the TabPFN attention layers to use our AlongColumnAttentionTwoPass (Zero-Shot ISAB).
     # num_prototypes (M): Sets the number of compressed induce points.
     class TempISAB(AlongColumnAttentionTwoPass):
         def __init__(self, *args, **kwargs):
             kwargs["num_prototypes"] = 128  # Use 128 prototypes for large scale
             super().__init__(*args, **kwargs)
             
-    # Patch all the versioned module definitions of along-column attention to use the ISAB-R implementation
+    # Patch all the versioned module definitions of along-column attention to use the Zero-Shot ISAB implementation
     tabpfn_v2.AlongColumnAttention = TempISAB
     tabpfn_v2_5.AlongColumnAttention = TempISAB
     tabpfn_v2_6.AlongColumnAttention = TempISAB
     
-    # Relax strict checking of state dict when loading weights because ISAB-R layers
+    # Relax strict checking of state dict when loading weights because Zero-Shot ISAB layers
     # contain additional hyperparameters/buffers not present in the vanilla checkpoints.
     original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
     tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
@@ -101,7 +103,7 @@ def run_isab_benchmark(size):
 # Run the benchmark on sizes scaling up to 1 Million rows
 sizes = [65536, 131072, 262144, 524288, 1048576]
 print("=========================================")
-print("MILLION-ROW SCALING BENCHMARK (ISAB-R)")
+print("MILLION-ROW SCALING BENCHMARK (Zero-Shot ISAB)")
 print("=========================================")
 for size in sizes:
     t, vram, acc, auc, status = run_isab_benchmark(size)

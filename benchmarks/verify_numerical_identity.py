@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 
 # 1. DYNAMIC SYSTEM PATH INCLUSION
 # Dynamically locate the project root relative to the directory containing this script.
@@ -34,7 +36,7 @@ x = torch.randn(Bc, R, E, device=device)
 with torch.no_grad():
     out_orig, kv_orig = original_layer(x, single_eval_pos=single_eval_pos, return_kv=True)
 
-# 3. REPLICATED DEBUG ISAB-R (TwoPass) IMPLEMENTATION
+# 3. REPLICATED DEBUG Zero-Shot ISAB (TwoPass) IMPLEMENTATION
 # This function replicates AlongColumnAttentionTwoPass to verify numerical identity.
 def run_debug_twopass(layer, x_BcRE, single_eval_pos, M=32, cached_kv=None, return_kv=False):
     Bc, R, E = x_BcRE.shape
@@ -53,7 +55,7 @@ def run_debug_twopass(layer, x_BcRE, single_eval_pos, M=32, cached_kv=None, retu
     train_rows = x_BcRE[:, :N]
     
     # 4. FALLBACK PATH (N <= M)
-    # If the number of training rows is less than or equal to M, ISAB-R must fall back
+    # If the number of training rows is less than or equal to M, Zero-Shot ISAB must fall back
     # to standard full self-attention, generating mathematically identical keys/values.
     if N <= M:
         k_refined = layer.k_projection(train_rows).view(Bc, N, H, D)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
 import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
 import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from zsisab_engine import AlongColumnAttentionZS_ISAB
+from zsisab.engine import AlongColumnAttentionZS_ISAB
 
 
 def patch_tabpfn_load_state_dict():

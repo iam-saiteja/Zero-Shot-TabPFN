@@ -3,7 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import pandas as pd
 
 # 1. DYNAMIC SYSTEM PATH INCLUSION
@@ -24,7 +26,7 @@ from tabpfn.architectures.kv_cache import KVCacheEntry
 from tabpfn.architectures.shared.scaled_dot_product_attention import scaled_dot_product_attention
 from evaluate import clear_gpu
 
-# Global configuration flags that will be updated per run to test different ISAB-R settings
+# Global configuration flags that will be updated per run to test different Zero-Shot ISAB settings
 CURRENT_M = 32
 USE_LOGIT_SCALING = False
 USE_NORM_ALIGNMENT = False

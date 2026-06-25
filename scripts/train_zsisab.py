@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import time
 import csv
 import torch
@@ -12,12 +14,12 @@ from pathlib import Path
 os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8Vo4"
 
 # 1. Monkey patch AlongColumnAttention in tabpfn architectures using our wrapper
-from tabpfn_wrapper import inject_zsisab_into_tabpfn
+from zsisab.wrapper import inject_zsisab_into_tabpfn
 inject_zsisab_into_tabpfn(num_prototypes=128)
 
 from tabpfn.finetuning.finetuned_classifier import FinetunedTabPFNClassifier
 from tabpfn.finetuning.data_util import ClassifierBatch
-from data_generator import generate_scm_dataset
+from zsisab.data_generator import generate_scm_dataset
 import tabpfn.finetuning.train_util as train_util
 from tabpfn.base import ClassifierModelSpecs, RegressorModelSpecs
 from tabpfn.architectures import ARCHITECTURES

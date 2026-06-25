@@ -7,7 +7,7 @@ import torch.nn.functional as F
 
 from tabpfn.architectures.tabpfn_v2 import AlongColumnAttention
 from tabpfn.architectures.kv_cache import KVCacheEntry
-from msa_pytorch import MiniMaxSparseAttentionPyTorch
+from zsisab.msa_pytorch import MiniMaxSparseAttentionPyTorch
 
 
 class AlongColumnAttentionLinear(AlongColumnAttention):

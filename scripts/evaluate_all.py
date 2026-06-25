@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
-import sys
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import time
 import torch
 import gc
@@ -19,10 +21,10 @@ os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
 import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
 import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from baselines import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB, AlongColumnAttentionTopKBlock
-from tabpfn_wrapper import inject_zsisab_into_tabpfn, restore_vanilla_tabpfn, patch_tabpfn_load_state_dict
+from zsisab.baselines import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB, AlongColumnAttentionTopKBlock
+from zsisab.wrapper import inject_zsisab_into_tabpfn, restore_vanilla_tabpfn, patch_tabpfn_load_state_dict
 from tabpfn import TabPFNClassifier
-from data_generator import generate_scm_dataset
+from zsisab.data_generator import generate_scm_dataset
 
 # Helper to clear CUDA memory
 def clear_gpu():
