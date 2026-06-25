@@ -19,7 +19,8 @@ os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
 import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
 import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from tabpfn_msa import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB
+from baselines import AlongColumnAttentionMSA, AlongColumnAttentionLinear, AlongColumnAttentionISAB, AlongColumnAttentionTopKBlock
+from tabpfn_wrapper import inject_zsisab_into_tabpfn, restore_vanilla_tabpfn, patch_tabpfn_load_state_dict
 from tabpfn import TabPFNClassifier
 from data_generator import generate_scm_dataset
 
@@ -69,36 +70,22 @@ def evaluate_trees(X_train, X_test, y_train, y_test, model_type="lgb"):
     
     return acc, auc, fit_time + infer_time
 
-def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla", msa_strategy="similarity", checkpoint_path=None):
+def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla", msa_strategy="similarity"):
     clear_gpu()
-    
-    # Restore original classes first
-    original_along_col = tabpfn_v2.AlongColumnAttention
     
     if variant == "linear":
         tabpfn_v2.AlongColumnAttention = AlongColumnAttentionLinear
         tabpfn_v2_5.AlongColumnAttention = AlongColumnAttentionLinear
         tabpfn_v2_6.AlongColumnAttention = AlongColumnAttentionLinear
-    elif variant == "isab":
-        from tabpfn_msa import AlongColumnAttentionTwoPass
-        class TempISAB(AlongColumnAttentionTwoPass):
-            def __init__(self, *args, **kwargs):
-                kwargs["num_prototypes"] = 128
-                super().__init__(*args, **kwargs)
-        tabpfn_v2.AlongColumnAttention = TempISAB
-        tabpfn_v2_5.AlongColumnAttention = TempISAB
-        tabpfn_v2_6.AlongColumnAttention = TempISAB
-        original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
-        tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
+        patch_tabpfn_load_state_dict()
+    elif variant == "isab_naive":
+        tabpfn_v2.AlongColumnAttention = AlongColumnAttentionISAB
+        tabpfn_v2_5.AlongColumnAttention = AlongColumnAttentionISAB
+        tabpfn_v2_6.AlongColumnAttention = AlongColumnAttentionISAB
+        patch_tabpfn_load_state_dict()
+    elif variant == "zs_isab":
+        inject_zsisab_into_tabpfn(num_prototypes=128)
     elif variant == "msa":
-        # Patch to use AlongColumnAttentionMSA
-        def patched_init(self, *args, **kwargs):
-            kwargs["blocking_strategy"] = msa_strategy
-            kwargs["topk"] = 4
-            kwargs["blk_kv"] = 32
-            AlongColumnAttentionMSA.__init__(self, *args, **kwargs)
-            
-        # Dynamically create temporary subclass to lock strategy
         class TempMSA(AlongColumnAttentionMSA):
             def __init__(self, *args, **kwargs):
                 kwargs["blocking_strategy"] = msa_strategy
@@ -109,23 +96,9 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
         tabpfn_v2.AlongColumnAttention = TempMSA
         tabpfn_v2_5.AlongColumnAttention = TempMSA
         tabpfn_v2_6.AlongColumnAttention = TempMSA
-
-        # Wrap load_state_dict to make it non-strict but keep original translations
-        original_load_v2 = tabpfn_v2.TabPFNV2.load_state_dict
-        tabpfn_v2.TabPFNV2.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2(self, sd, strict=False, assign=assign)
-
-        original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
-        tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
-
-        original_load_v2_6 = tabpfn_v2_6.TabPFNV2p6.load_state_dict
-        tabpfn_v2_6.TabPFNV2p6.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_6(self, sd, strict=False, assign=assign)
+        patch_tabpfn_load_state_dict()
     else:
-        # Restore vanilla
-        # We need to reload original classes if they were modified
-        import importlib
-        importlib.reload(tabpfn_v2)
-        importlib.reload(tabpfn_v2_5)
-        importlib.reload(tabpfn_v2_6)
+        restore_vanilla_tabpfn()
         
     try:
         from tabpfn.constants import ModelVersion
@@ -133,13 +106,6 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
             ModelVersion.V2_5,
             device="cuda" if torch.cuda.is_available() else "cpu"
         )
-        
-        # Load checkpoint if provided
-        if checkpoint_path and variant == "msa":
-            print(f"Loading MSA checkpoint: {checkpoint_path}")
-            clf._initialize_model_variables()
-            checkpoint = torch.load(checkpoint_path, map_location=clf.device)
-            clf.model_.load_state_dict(checkpoint["state_dict"])
             
         start_time = time.time()
         if torch.cuda.is_available():
@@ -162,19 +128,11 @@ def evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla",
         traceback.print_exc()
         return 0.0, 0.0, 0.0, 0.0
     finally:
-        # Restore original classes
-        import importlib
-        importlib.reload(tabpfn_v2)
-        importlib.reload(tabpfn_v2_5)
-        importlib.reload(tabpfn_v2_6)
+        restore_vanilla_tabpfn()
 
 def main():
     print("====================================================")
-    # Restore original states just in case
-    import importlib
-    importlib.reload(tabpfn_v2)
-    importlib.reload(tabpfn_v2_5)
-    importlib.reload(tabpfn_v2_6)
+    restore_vanilla_tabpfn()
 
     # 1. Evaluate on Real Datasets
     print("--- Phase 5: Evaluation on Real OpenML/Toy Datasets ---")
@@ -186,16 +144,12 @@ def main():
     
     results = []
     
-    checkpoint_path = "msa_checkpoints/checkpoint_1K_best.pth"
-    has_checkpoint = os.path.exists(checkpoint_path)
-    
     for name, load_fn in datasets.items():
         print(f"\nEvaluating dataset: {name}...")
         try:
             X, y = load_fn()
             X, y = preprocess_dataset(X, y)
             
-            # Limit total rows to 1000 for standard validation sets to speed up
             if X.shape[0] > 1000:
                 X, _, y, _ = train_test_split(X, y, train_size=1000, random_state=42, stratify=y)
                 
@@ -211,30 +165,17 @@ def main():
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="vanilla")
             results.append({"Dataset": name, "Model": "Vanilla_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
             
-            # Linear Attention TabPFN
+            # Linear Attention TabPFN (Baseline)
             acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="linear")
-            results.append({"Dataset": name, "Model": "Linear_Attention_TabPFN", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+            results.append({"Dataset": name, "Model": "Linear_Attention_TabPFN (Baseline)", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
             
-            # ISAB Attention TabPFN
-            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab")
-            results.append({"Dataset": name, "Model": "ISAB-R (Ours)", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-            
-            # MSA TabPFN (Zero-shot, Random)
-            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="random")
-            results.append({"Dataset": name, "Model": "MSA_TabPFN_Random_ZeroShot", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-            
-            # MSA TabPFN (Zero-shot, Similarity)
-            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="similarity")
-            results.append({"Dataset": name, "Model": "MSA_TabPFN_Similarity_ZeroShot", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-            
-            # MSA TabPFN (Zero-shot, PCA)
-            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="pca")
-            results.append({"Dataset": name, "Model": "MSA_TabPFN_PCA_ZeroShot", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
-            
-            # MSA TabPFN (Fine-tuned, Similarity)
-            if has_checkpoint:
-                acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="msa", msa_strategy="similarity", checkpoint_path=checkpoint_path)
-                results.append({"Dataset": name, "Model": "MSA_TabPFN_Similarity_Finetuned", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+            # Naive ISAB TabPFN (Baseline)
+            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="isab_naive")
+            results.append({"Dataset": name, "Model": "ISAB_Naive_TabPFN (Baseline)", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
+
+            # Zero-Shot ISAB TabPFN
+            acc, auc, elapsed, vram = evaluate_tabpfn_variant(X_train, X_test, y_train, y_test, variant="zs_isab")
+            results.append({"Dataset": name, "Model": "Zero-Shot ISAB (Ours)", "Accuracy": acc, "ROC_AUC": auc, "Time (s)": elapsed, "Peak VRAM (MB)": vram})
                 
         except Exception as e:
             print(f"Failed to process dataset {name}: {e}")
@@ -259,7 +200,7 @@ def main():
         variants = {
             "Vanilla_TabPFN": ("vanilla", None),
             "Linear_Attention_TabPFN": ("linear", None),
-            "ISAB-R (Ours)": ("isab", None),
+            "Zero-Shot ISAB (Ours)": ("zs_isab", None),
             "Partitioned_Attention_TabPFN": ("msa", "random")
         }
         
@@ -302,7 +243,6 @@ def main():
     print("\n==================== SCALING SCENARIO RESULTS ====================")
     print(df_scaling.to_markdown(index=False))
     df_scaling.to_csv("scaling_evaluation_results.csv", index=False)
-
 
 if __name__ == "__main__":
     main()

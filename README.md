@@ -1,8 +1,8 @@
-# ISAB-R (Ours): Refined Inducing Point Attention for Tabular Transformers
+# Zero-Shot ISAB (Ours): Refined Inducing Point Attention for Tabular Transformers
 
 This repository contains a **zero-shot compatible, linear-complexity row attention wrapper** for pre-trained tabular transformers (such as TabPFN). 
 
-Our implementation of **ISAB-R (Ours)** (Refined Inducing Point Attention) scales to extremely long sequence contexts ($N > 500,000$ rows) on standard consumer hardware, completely bypassing the quadratic $O(N^2)$ memory and time bottlenecks of dense attention, while maintaining a negligible accuracy/ROC AUC tradeoff (typically **<0.6%**).
+Our implementation of **Zero-Shot ISAB (Ours)** (Refined Inducing Point Attention) scales to extremely long sequence contexts ($N > 500,000$ rows) on standard consumer hardware, completely bypassing the quadratic $O(N^2)$ memory and time bottlenecks of dense attention, while maintaining a negligible accuracy/ROC AUC tradeoff (typically **<0.6%**).
 
 ---
 
@@ -26,16 +26,16 @@ To run row-compression on pre-trained checkpoints in a **strictly zero-shot** se
 *Hardware environment: All benchmarks run on **NVIDIA GeForce RTX 3050 A Laptop GPU** (4GB physical VRAM).*
 
 ### 1. Real-World OpenML Benchmarks (Low $N$)
-Due to vectorized chunking, our model (`ISAB-R (Ours)` with $M=128$) is now **faster** than Vanilla TabPFN on standard datasets while maintaining a virtually identical ROC AUC (less than a **0.1% to 0.3% tradeoff**):
+Due to vectorized chunking, our model (`Zero-Shot ISAB (Ours)` with $M=128$) is now **faster** than Vanilla TabPFN on standard datasets while maintaining a virtually identical ROC AUC (less than a **0.1% to 0.3% tradeoff**):
 
 | Dataset | Model | Accuracy | ROC AUC | Time (s) | Peak VRAM (MB) | ROC AUC Gap |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Breast Cancer** ($N=398$) | Vanilla_TabPFN | **0.9591** | **0.9969** | 2.088 | 144.0 | Ref |
-| | ISAB-R (Ours) | **0.9649** | **0.9937** | **1.617** *(Faster!)* | 129.8 | **-0.32%** |
+| | Zero-Shot ISAB (Ours) | **0.9649** | **0.9937** | **1.617** *(Faster!)* | 129.8 | **-0.32%** |
 | **credit-g** ($N=700$) | Vanilla_TabPFN | **0.7733** | **0.7903** | 2.411 | 183.3 | Ref |
-| | ISAB-R (Ours) | **0.7000** | **0.7892** | **1.832** *(Faster!)* | 138.7 | **-0.11%** |
+| | Zero-Shot ISAB (Ours) | **0.7000** | **0.7892** | **1.832** *(Faster!)* | 138.7 | **-0.11%** |
 | **diabetes** ($N=537$) | Vanilla_TabPFN | **0.7446** | **0.8469** | 1.146 | 108.7 | Ref |
-| | ISAB-R (Ours) | **0.7446** | **0.8347** | 1.514 | 96.9 | **-1.22%** |
+| | Zero-Shot ISAB (Ours) | **0.7446** | **0.8347** | 1.514 | 96.9 | **-1.22%** |
 
 ---
 
@@ -45,19 +45,19 @@ Our model exhibits perfect **linear complexity $O(N)$ scaling**, allowing it to 
 | Rows (N) | Model | Test Accuracy | Test ROC AUC | Time (s) | Peak VRAM | Complexity Scaling |
 | :--- | :--- | :---: | :---: | :---: | :---: | :---: |
 | **8,192** | Vanilla_TabPFN | 0.6600 | 0.6484 | 9.77s | 471.3 MB | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.6033** | **0.6119** | **5.34s** | **363.2 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.6033** | **0.6119** | **5.34s** | **363.2 MB** | **Linear ($N$)** |
 | **16,384** | Vanilla_TabPFN | — | — | 26.29s | 868.3 MB | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.6033** | **0.6119** | **10.46s** | **651.6 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.6033** | **0.6119** | **10.46s** | **651.6 MB** | **Linear ($N$)** |
 | **32,768** | Vanilla_TabPFN | — | — | 88.10s | 637.8 MB | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.6033** | **0.6119** | **20.74s** | **577.1 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.6033** | **0.6119** | **20.74s** | **577.1 MB** | **Linear ($N$)** |
 | **65,536** | Vanilla_TabPFN | *OOM* | *OOM* | *OOM* | *OOM* | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.7600** | **0.7952** | **80.88s** | **1,083.5 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.7600** | **0.7952** | **80.88s** | **1,083.5 MB** | **Linear ($N$)** |
 | **131,072** | Vanilla_TabPFN | *OOM* | *OOM* | *OOM* | *OOM* | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.7700** | **0.8054** | **159.46s** | **2,095.5 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.7700** | **0.8054** | **159.46s** | **2,095.5 MB** | **Linear ($N$)** |
 | **262,144** | Vanilla_TabPFN | *OOM* | *OOM* | *OOM* | *OOM* | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.6600** | **0.7456** | **1,520.82s** | **4,119.0 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.6600** | **0.7456** | **1,520.82s** | **4,119.0 MB** | **Linear ($N$)** |
 | **524,288** | Vanilla_TabPFN | *OOM* | *OOM* | *OOM* | *OOM* | Quadratic ($N^2$) |
-| | ISAB-R (Ours) | **0.7400** | **0.7341** | **4,630.08s** | **8,164.0 MB** | **Linear ($N$)** |
+| | Zero-Shot ISAB (Ours) | **0.7400** | **0.7341** | **4,630.08s** | **8,164.0 MB** | **Linear ($N$)** |
 
 ---
 
@@ -102,3 +102,7 @@ Our model exhibits perfect **linear complexity $O(N)$ scaling**, allowing it to 
    ```bash
    python benchmarks/benchmark_vectorization.py
    ```
+
+## 📚 Citations
+- **ISAB Framework**: Lee, J., Lee, Y., Kim, J., Kosiorek, A., Choi, S., & Teh, Y. W. (2019). *Set Transformer: A Framework for Attention over Sets*. Proceedings of the 36th International Conference on Machine Learning (ICML).
+- **Linear Attention Baseline**: Katharopoulos, A., Vyas, A., Pappas, N., & Fleuret, F. (2020). *Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention*. Proceedings of the 37th International Conference on Machine Learning (ICML).
