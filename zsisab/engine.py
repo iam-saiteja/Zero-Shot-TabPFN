@@ -2,7 +2,7 @@ import math
 import torch
 import torch.nn.functional as F
 
-def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, use_logit_scaling: bool = True, use_norm_alignment: bool = True):
+def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, use_logit_scaling: bool = True, use_norm_alignment: bool = True):
     """
     Returns a monkey-patched forward function for tabpfn.layer.TransformerEncoderLayer.
     
@@ -10,7 +10,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, u
     the training context from O(N^2) to O(N*M) attention complexity while preserving
     the pretrained TabPFN representations through:
       1. Deterministic prototype generation via chunked averaging (no row dropping)
-      2. Norm alignment corrected for CLT variance reduction
+      2. Norm alignment that preserves prototype mean without distorting variance
       3. Symmetric dynamic logit scaling for both train and test queries
     """
     def zsisab_forward(self, src: torch.Tensor, src_mask=None, src_key_padding_mask=None) -> torch.Tensor:
@@ -40,43 +40,33 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, u
             else:
                 # --- ZERO-SHOT ISAB ---
 
-                # Determine layout: TabPFN uses batch_first=False → src is [Seq, Batch, Embed]
+                # Determine layout: TabPFN uses batch_first=False -> src is [Seq, Batch, Embed]
                 is_batch_first = self.self_attn.batch_first
 
                 if is_batch_first:
                     train_for_chunk = train_rows          # [B, N, E]
                 else:
-                    train_for_chunk = train_rows.transpose(0, 1)  # [N, B, E] → [B, N, E]
+                    train_for_chunk = train_rows.transpose(0, 1)  # [N, B, E] -> [B, N, E]
 
                 B, seq_N, E = train_for_chunk.shape
 
                 # 1. Prototype Generation — Deterministic, no row dropping
                 #    Use a fixed seed so all 12 layers see the same prototypes.
-                #    Pad the last chunk so every row participates.
                 generator = torch.Generator(device=train_for_chunk.device)
                 generator.manual_seed(42)
                 perm = torch.randperm(seq_N, device=train_for_chunk.device, generator=generator)
 
                 chunk_size = max(1, seq_N // M)
-                # Assign ALL rows to prototypes via padding (repeat last rows to fill)
-                if seq_N < M * chunk_size:
-                    # Fewer rows than M*chunk_size: pad by repeating
-                    pad_count = M * chunk_size - seq_N
-                    perm = torch.cat([perm, perm[:pad_count]])
-                elif seq_N > M * chunk_size:
-                    # More rows than M*chunk_size: include remainder in last chunk
-                    # Reshape the first M*chunk_size into [M, chunk_size], then handle remainder
-                    remainder = seq_N - M * chunk_size
-                    # We'll use all rows: first M-1 chunks of chunk_size, last chunk gets the rest
-                    pass  # handled below
 
                 # Build prototypes ensuring ALL rows are used
                 if seq_N <= M * chunk_size:
-                    # Exact fit or padded
+                    # Exact fit or fewer rows: pad by repeating
+                    if seq_N < M * chunk_size:
+                        pad_count = M * chunk_size - seq_N
+                        perm = torch.cat([perm, perm[:pad_count]])
                     gathered = train_for_chunk[:, perm[:M * chunk_size]]
                     gathered = gathered.view(B, M, chunk_size, E)
                     proto_init = gathered.mean(dim=2)  # [B, M, E]
-                    effective_chunk_size = chunk_size
                 else:
                     # More rows than fit evenly: give remainder to last chunk
                     main_count = (M - 1) * chunk_size
@@ -88,25 +78,22 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, u
                     last_proto = last_chunk.mean(dim=1, keepdim=True)   # [B, 1, E]
 
                     proto_init = torch.cat([main_protos, last_proto], dim=1)  # [B, M, E]
-                    effective_chunk_size = chunk_size
 
-                # 2. Norm Alignment — corrected for CLT variance reduction
-                #    Prototypes (averages of chunks) naturally have std ≈ train_std / √chunk_size
-                #    We correct for this factor rather than blindly rescaling to train_std
-                if use_norm_alignment and effective_chunk_size > 1:
-                    train_mean = train_for_chunk.mean(dim=1, keepdim=True)
-                    train_std = train_for_chunk.std(dim=1, keepdim=True).clamp(min=1e-6)
-                    proto_mean = proto_init.mean(dim=1, keepdim=True)
-                    proto_std = proto_init.std(dim=1, keepdim=True).clamp(min=1e-6)
-
-                    # Target std for prototypes: train_std / √chunk_size (CLT expectation)
-                    target_std = train_std / math.sqrt(effective_chunk_size)
-                    proto_init = (proto_init - proto_mean) / proto_std * target_std + train_mean
+                # 2. Norm Alignment — mean-only correction
+                #    Shift prototypes to match the training set mean without touching variance.
+                #    Averaging naturally reduces variance (CLT), and that's CORRECT behavior —
+                #    prototypes SHOULD be less extreme than individual tokens. Rescaling variance
+                #    (either up or down) distorts the learned attention patterns.
+                if use_norm_alignment:
+                    train_mean = train_for_chunk.mean(dim=1, keepdim=True)   # [B, 1, E]
+                    proto_mean = proto_init.mean(dim=1, keepdim=True)        # [B, 1, E]
+                    proto_init = proto_init - proto_mean + train_mean
 
                 if not is_batch_first:
-                    proto_init = proto_init.transpose(0, 1)  # [B, M, E] → [M, B, E]
+                    proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
 
                 # 3. Dynamic Logit Scaling — applied SYMMETRICALLY to both train and test
+                #    Compensates for softmax distributing mass over M keys instead of N.
                 if use_logit_scaling and seq_N > M:
                     scale_factor = math.sqrt(math.log(seq_N) / math.log(M))
                     train_queries_scaled = train_rows * scale_factor
