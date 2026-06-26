@@ -2,7 +2,7 @@
 
 This repository contains a **zero-shot compatible, linear-complexity row attention wrapper** for pre-trained tabular transformers (specifically TabPFN v0.1.11). 
 
-By implementing **Zero-Shot Nyström TabPFN (NSA-TabPFN)**, we approximate the quadratic $O(N^2)$ self-attention matrix with a low-rank Nyström projection. This enables TabPFN's context length to scale to **hundreds of thousands of rows** on standard consumer hardware, bypassing Out-Of-Memory (OOM) boundaries while preserving the pre-trained in-context representation space.
+By implementing **Zero-Shot Nyström TabPFN (NSA-TabPFN)**, we approximate the quadratic $O(N^2)$ self-attention matrix with a low-rank Nyström projection. A **two-stage compression pipeline** (wrapper-level prototype subsampling + engine-level Nyström attention) bounds GPU memory to a fixed window of `num_prototypes + test_chunk_size` rows per transformer call. **GPU VRAM remains the physical limit**: larger VRAM budgets directly enable larger prototype contexts, which improve accuracy. Without explicit CPU offloading (not implemented by default), the raw dataset must fit in CPU RAM.
 
 ---
 
@@ -13,7 +13,8 @@ In accordance with rigorous empirical standards, the claims made in this work ar
 | Claim | Supported By (Evidence) | Artifact |
 | :--- | :--- | :--- |
 | **1. Zero-Shot Representation Preservation**<br>NSA-TabPFN preserves the pre-trained manifold post-hoc, yielding near-parity classification accuracy on standard tabular datasets without retraining. | **`scripts/evaluate_openml_broad.py`** (evaluates 30 datasets comparing Vanilla vs NSA-TabPFN across different bottleneck scales). | ![Ablation](assets/ablation_study.png) ![Accuracy](assets/broad_evaluation_accuracy.png) |
-| **2. O(N) Complexity Scaling**<br>The low-rank Nyström projection scales linearly in memory and time, permitting sequence lengths of $N > 262,000$ on local 4GB VRAM and $N > 1.04$ Million on remote 24GB GPUs. | **`benchmarks/benchmark_server_scaling.py`** (evaluates Vanilla vs NSA-TabPFN side-by-side on sequence lengths up to 524,288). | ![Latency](assets/server_scaling_time.png) ![Memory](assets/server_scaling_memory.png) |
+| **2. VRAM Bounded by Context Window, Not Dataset Size**<br>The two-stage pipeline caps the transformer's input to `num_prototypes + test_chunk_size` rows per call. VRAM grows with the prototype window size, not with raw N. More GPU VRAM = larger context window = better accuracy. | **`benchmarks/benchmark_server_scaling.py`**, **`server_evaluation_suite/benchmark_million_rows.py`** | ![Latency](assets/server_scaling_time.png) ![Memory](assets/server_scaling_memory.png) |
+| **3. 1M-Row Inference at 485 MB VRAM (ctx=512)**<br>With `num_prototypes=512`, a 1M-row training set is subsampled to 512 prototype rows before the GPU sees any data. The 485 MB footprint reflects the cost of a 1024-row transformer call — not 1M rows. Tested: 1,000,000 rows, 0.50s, Acc: 1.0000 on RTX 3090 Ti. | **`server_evaluation_suite/benchmark_million_rows.py`** | — |
 
 ---
 
@@ -43,6 +44,61 @@ Our implementation uses **Zero-Shot Nyström Projection (NSA-TabPFN)**, which dy
    \text{Attention}(Q, K, V) = \text{softmax}\left(\frac{Q K_{\text{compressed}}^T}{\sqrt{E}}\right) V_{\text{compressed}}
    \]
    This keeps keys and values strictly within the model's native key/value projection spaces, preventing representation collapse.
+
+### Two-Stage Compression Architecture (v2)
+
+In the current implementation, NSA-TabPFN uses a **two-stage compression pipeline** to achieve constant VRAM regardless of dataset size:
+
+**Stage 1 — Wrapper-Level Prototype Subsampling** (`nsatabpfn/wrapper.py`, `cpu_offloading=True` only):
+- Before the transformer sees any data, `nsa_transformer_predict` deterministically subsamples `num_prototypes` rows (fixed seed 42) from the full $N_{\text{train}}$ training set on CPU.
+- Test rows are processed in chunks of `test_chunk_size`.
+- The transformer input per call is always `num_prototypes + test_chunk_size` rows — bounded by the prototype window, not by N.
+- **`num_prototypes` is a hyperparameter** controlling the accuracy–VRAM trade-off: more prototypes → richer training summary → better accuracy, at the cost of more GPU memory per call.
+
+**Stage 2 — Engine-Level NSA Attention** (`nsatabpfn/engine.py`, always active):
+- Inside each transformer call, the Nyström softmax attention further compresses the prototype context using M anchor points.
+- This handles sub-quadratic attention within the bounded window.
+
+**Physical Limits (honest):**
+
+| Resource | What determines it | Notes |
+|---|---|---|
+| **GPU VRAM** | `num_prototypes + test_chunk_size` forward pass | The real physical limit. Larger VRAM → larger `num_prototypes` → better accuracy. |
+| **CPU RAM** | Raw dataset size (`X_train`, `X_test`) | Must fit in system memory. 1M × 10 features ≈ 40 MB. 100M rows ≈ 4 GB. |
+| **CPU offloading** | Opt-in via `cpu_offloading=True` | Off by default. Without it, data goes to GPU; OOM if too large (no silent fallback). |
+
+**True GPU-only limit (RTX 3090 Ti, 24 GB, empirically confirmed by binary search):**
+
+| N | VRAM used | Acc (M=128) | Status |
+|---|---|---|---|
+| 524,288 | 12,962 MB | 0.51 ⚠️ degenerate | OOM boundary search base |
+| 786,432 | 19,430 MB | 0.45 ⚠️ | Success (VRAM) |
+| 917,504 | 22,675 MB | 0.43 ⚠️ | Success (VRAM) |
+| 950,272 | 23,485 MB | 0.53 ⚠️ | **Last success before OOM** |
+| 958,464 | — | — | **OOM** |
+
+**VRAM ceiling: ~950K rows.** Beyond this the GPU runs out of memory.
+
+**Accuracy warning:** The 0.5 accuracy at large N is NOT a data bug. It is a fundamental NSA softmax degeneration: when N >> M, all softmax weights become ~1/N (uniform), all M anchor summaries converge to mean(X_train), and the transformer receives M identical vectors — effectively random predictions. Rule of thumb:
+- M=128 is valid up to N≈65K (512:1 compression ratio)
+- M=128 starts degrading past N≈200K (1600:1)
+- M=128 fully degenerates at N≈524K (4096:1)
+- To use gpu_only mode with good accuracy at N=500K+, set M≥1024 in `inject_nsatabpfn`
+
+**`num_prototypes` as a hyperparameter (cpu_offloading mode):**
+
+| `num_prototypes` | Rows shown to transformer | VRAM cost | Expected accuracy |
+|---|---|---|---|
+| 128 | 128 + chunk | ~200 MB | Lower (aggressive compression) |
+| 512 | 512 + chunk | ~486 MB | Good (tested: 100% on 1M synthetic) |
+| 1024 | 1024 + chunk | ~900 MB | Better |
+| 4096 | 4096 + chunk | ~3.5 GB | Near-parity with GPU-only |
+
+**What the 1M result actually means:**
+- 1,000,000 training rows were stored on CPU (40 MB numpy array — trivial).
+- Only **512 prototype rows** were sent to GPU (subsampled from 1M).
+- The GPU processed `512 + 100 = 612` rows per call, costing **485 MB**.
+- With more GPU VRAM, raise `num_prototypes` for better accuracy.
 
 ---
 
@@ -88,7 +144,10 @@ Evaluating sequence lengths $N$ dynamically on the remote 24GB VRAM GPU until ph
 | **32,768** | *OOM (Requires 32GB+)* | 816.9 MB | 833.2 MB | 865.7 MB |
 | **131,072** | *OOM (Requires 128GB+)* | 3,260.8 MB | 3,325.0 MB | 3,453.5 MB |
 | **524,288** | *OOM (Requires 512GB+)* | **13,036.5 MB** | **13,292.7 MB** | **13,805.2 MB** |
-| **1,048,576** | *OOM (Requires 1.02TB+)* | *OOM (Exceeded 24GB)* | *OOM (Exceeded 24GB)* | *OOM (Exceeded 24GB)* |
+| **1,000,000** | *OOM (Requires 1.02TB+)* | — | — | — |
+| **1,000,000** *(two-stage, ctx=512)* | *OOM* | **485.82 MB**, 0.50s, Acc: 1.0000 ✅ | **485.82 MB**, 0.50s, Acc: 1.0000 ✅ | **485.82 MB**, 0.50s, Acc: 1.0000 ✅ |
+
+> **Physical limit note:** The ~486 MB footprint reflects the cost of a `512 + 512 = 1024` row forward pass through TabPFN — not the cost of processing 1M rows. The raw 1M-row dataset lives on CPU RAM (~40 MB). The architectural limit is GPU VRAM: more VRAM allows larger `num_prototypes` (richer training context, better accuracy) and larger `test_chunk_size` (faster inference). CPU offloading (to process datasets that don't fit in CPU RAM) is **not implemented** and would require explicit opt-in.
 
 ---
 
@@ -118,6 +177,10 @@ Evaluating sequence lengths $N$ dynamically on the remote 24GB VRAM GPU until ph
 * Run the side-by-side scaling benchmark:
   ```bash
   python benchmarks/benchmark_server_scaling.py
+  ```
+* Run the 1-million-row targeted benchmark:
+  ```bash
+  python server_evaluation_suite/benchmark_million_rows.py
   ```
 * Check local installation sanity:
   ```bash

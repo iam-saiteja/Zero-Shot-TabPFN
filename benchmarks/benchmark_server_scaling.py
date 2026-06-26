@@ -9,7 +9,10 @@ import sys
 import numpy as np
 import pandas as pd
 
+import sys
+import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tests')))
 
 def clear_gpu():
     if torch.cuda.is_available():
@@ -150,9 +153,6 @@ def run_extreme_scaling():
         print("Generated scaling charts in assets/")
     else:
         print("\nNo successful runs to plot.")
-
-if __name__ == "__main__":
-    run_extreme_scaling()
 
 if __name__ == "__main__":
     run_extreme_scaling()
