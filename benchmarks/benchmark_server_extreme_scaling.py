@@ -57,7 +57,22 @@ def generate_synthetic_data(n_samples, n_features=20):
 def run_unlimited_single_process_scaling():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hw_name = get_hardware_name()
-    print(f"Starting Single-Process Extreme Scaling Benchmark on: {hw_name} ({device})")
+    
+    print("=" * 70)
+    print("NSA-TABPFN EXTREME SCALING BENCHMARK SUITE")
+    print("=" * 70)
+    print(f"Target Hardware : {hw_name}")
+    print(f"Device Active   : {device.upper()}")
+    print("Dataset Profile : Synthetic Tabular Classification (20 features, binary labels)")
+    
+    if not torch.cuda.is_available():
+        print("\n" + "!" * 70)
+        print("WARNING: CUDA is NOT active in PyTorch. The benchmark is running on CPU.")
+        print("To run on the RTX 3090 Ti GPU, reinstall PyTorch matching your CUDA 12.2 driver:")
+        print("  uv pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu121")
+        print("!" * 70 + "\n")
+        
+    print("=" * 70)
     
     configs = [
         ('NSA-TabPFN (M=64)', 'NSA-TabPFN', 64),
