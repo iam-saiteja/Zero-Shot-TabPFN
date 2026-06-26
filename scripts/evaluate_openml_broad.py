@@ -27,13 +27,22 @@ torch.nn.modules.transformer.Optional = typing.Optional
 
 # --- SCIKIT-LEARN COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
 import sklearn.utils.validation
-original_check_X_y = sklearn.utils.validation.check_X_y
-def patched_check_X_y(*args, **kwargs):
-    kwargs.pop('force_all_finite', None)
-    return original_check_X_y(*args, **kwargs)
-sklearn.utils.validation.check_X_y = patched_check_X_y
 import sklearn.utils
-sklearn.utils.check_X_y = patched_check_X_y
+_original_check_X_y = sklearn.utils.validation.check_X_y
+_original_check_array = sklearn.utils.validation.check_array
+
+def _patched_check_X_y(*args, **kwargs):
+    kwargs.pop('force_all_finite', None)
+    return _original_check_X_y(*args, **kwargs)
+
+def _patched_check_array(*args, **kwargs):
+    kwargs.pop('force_all_finite', None)
+    return _original_check_array(*args, **kwargs)
+
+sklearn.utils.validation.check_X_y = _patched_check_X_y
+sklearn.utils.validation.check_array = _patched_check_array
+sklearn.utils.check_X_y = _patched_check_X_y
+sklearn.utils.check_array = _patched_check_array
 # ----------------------------------------------------------
 
 from tabpfn import TabPFNClassifier
@@ -92,7 +101,7 @@ def evaluate_broad():
             # 2. Zero-Shot ISAB
             clear_gpu()
             from zsisab.wrapper import inject_zsisab_into_tabpfn
-            inject_zsisab_into_tabpfn(num_prototypes=128)
+            inject_zsisab_into_tabpfn(num_prototypes=32)
             
             clf_isab = TabPFNClassifier(device=device, N_ensemble_configurations=1)
             clf_isab.fit(X_train, y_train)
