@@ -92,19 +92,12 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
                 if not is_batch_first:
                     proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
 
-                # 3. Dynamic Logit Scaling — applied SYMMETRICALLY to both train and test
-                #    Compensates for softmax distributing mass over M keys instead of N.
-                if use_logit_scaling and seq_N > M:
-                    scale_factor = math.sqrt(math.log(seq_N) / math.log(M))
-                    train_queries_scaled = train_rows * scale_factor
-                    test_queries_scaled = test_rows * scale_factor
-                else:
-                    train_queries_scaled = train_rows
-                    test_queries_scaled = test_rows
-
                 # Evaluate queries against prototypes
-                src_left = self.self_attn(train_queries_scaled, proto_init, proto_init)[0]
-                src_right = self.self_attn(test_queries_scaled, proto_init, proto_init)[0]
+                # No logit scaling: scaling Q distorts the residual stream magnitude
+                # and is not equivalent to a softmax temperature correction. The pretrained
+                # attention heads already have calibrated d_k scaling via their projections.
+                src_left = self.self_attn(train_rows, proto_init, proto_init)[0]
+                src_right = self.self_attn(test_rows, proto_init, proto_init)[0]
 
                 src2 = torch.cat([src_left, src_right], dim=0)
 
