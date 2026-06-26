@@ -10,8 +10,13 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
     the training context from O(N^2) to O(N*M) attention complexity while preserving
     the pretrained TabPFN representations through:
       1. Deterministic prototype generation via chunked averaging (no row dropping)
-      2. Norm alignment that preserves prototype mean without distorting variance
-      3. Symmetric dynamic logit scaling for both train and test queries
+      2. Mean-only norm alignment (preserves natural CLT variance reduction)
+      3. Conservative activation: only engages when N > 4*M to ensure sufficient
+         compression ratio and avoid distortion on small datasets
+    
+    For small datasets (N <= 4*M), falls back to vanilla dense attention which is
+    already fast enough. ZS-ISAB provides its benefit on large-scale datasets
+    (thousands to hundreds of thousands of rows) where O(N^2) becomes prohibitive.
     """
     def zsisab_forward(self, src: torch.Tensor, src_mask=None, src_key_padding_mask=None) -> torch.Tensor:
         if self.pre_norm:
@@ -24,23 +29,22 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
             assert src_key_padding_mask is None
             single_eval_position = src_mask
             N = single_eval_position
-
-            # Adaptive prototype count: ensure meaningful compression
-            # Use at most N//4 prototypes (minimum 16) to guarantee chunk_size >= 4
-            M = min(num_prototypes, max(16, N // 4))
+            M = num_prototypes
 
             train_rows = src_[:N]
             test_rows = src_[N:]
 
-            if N <= M:
-                # Fallback to dense attention (identical to vanilla TabPFN)
+            # Only activate ISAB when there's meaningful compression to be had.
+            # For N <= 4*M, dense attention is fast enough and strictly more accurate.
+            # ZS-ISAB targets the regime where N >> M (thousands+ rows).
+            if N <= 4 * M:
+                # Dense attention (identical to vanilla TabPFN)
                 src_left = self.self_attn(train_rows, train_rows, train_rows)[0]
                 src_right = self.self_attn(test_rows, train_rows, train_rows)[0]
                 src2 = torch.cat([src_left, src_right], dim=0)
             else:
                 # --- ZERO-SHOT ISAB ---
 
-                # Determine layout: TabPFN uses batch_first=False -> src is [Seq, Batch, Embed]
                 is_batch_first = self.self_attn.batch_first
 
                 if is_batch_first:
@@ -51,7 +55,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
                 B, seq_N, E = train_for_chunk.shape
 
                 # 1. Prototype Generation — Deterministic, no row dropping
-                #    Use a fixed seed so all 12 layers see the same prototypes.
+                #    Fixed seed ensures all 12 transformer layers see the same prototypes.
                 generator = torch.Generator(device=train_for_chunk.device)
                 generator.manual_seed(42)
                 perm = torch.randperm(seq_N, device=train_for_chunk.device, generator=generator)
@@ -81,9 +85,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
 
                 # 2. Norm Alignment — mean-only correction
                 #    Shift prototypes to match the training set mean without touching variance.
-                #    Averaging naturally reduces variance (CLT), and that's CORRECT behavior —
-                #    prototypes SHOULD be less extreme than individual tokens. Rescaling variance
-                #    (either up or down) distorts the learned attention patterns.
+                #    Averaging naturally reduces variance (CLT), and that's correct behavior.
                 if use_norm_alignment:
                     train_mean = train_for_chunk.mean(dim=1, keepdim=True)   # [B, 1, E]
                     proto_mean = proto_init.mean(dim=1, keepdim=True)        # [B, 1, E]
@@ -92,10 +94,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
                 if not is_batch_first:
                     proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
 
-                # Evaluate queries against prototypes
-                # No logit scaling: scaling Q distorts the residual stream magnitude
-                # and is not equivalent to a softmax temperature correction. The pretrained
-                # attention heads already have calibrated d_k scaling via their projections.
+                # Evaluate queries against prototypes (standard ISAB: K=proto, V=proto)
                 src_left = self.self_attn(train_rows, proto_init, proto_init)[0]
                 src_right = self.self_attn(test_rows, proto_init, proto_init)[0]
 
