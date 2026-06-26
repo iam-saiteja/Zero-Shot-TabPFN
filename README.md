@@ -76,7 +76,22 @@ Evaluating sequence lengths $N$ side-by-side until execution failure:
 | **65,536** | *OOM (Requires 64GB+)* | **1,601.5 MB** | 0.9700 |
 | **262,144** | *OOM (Requires 1.02TB+)* | **6,392.3 MB** *(Virtual Paging)* | 0.8800 |
 
+### 3. Server-Grade Extreme VRAM Scaling Limits (RTX 3090 Ti 24GB GPU)
+
+Evaluating sequence lengths $N$ dynamically on the remote 24GB VRAM GPU until physical hardware limits are exhausted:
+
+| Sequence Length (N) | Vanilla TabPFN | NSA-TabPFN ($M=64$) | NSA-TabPFN ($M=128$) | NSA-TabPFN ($M=256$) |
+| :--- | :---: | :---: | :---: | :---: |
+| **1,024** | 51.6 MB | 36.6 MB | 28.5 MB | 30.0 MB |
+| **8,192** | 2,200.3 MB | 206.7 MB | 210.2 MB | 218.7 MB |
+| **16,384** | 8,496.8 MB | 411.5 MB | 418.8 MB | 435.3 MB |
+| **32,768** | *OOM (Requires 32GB+)* | 816.9 MB | 833.2 MB | 865.7 MB |
+| **131,072** | *OOM (Requires 128GB+)* | 3,260.8 MB | 3,325.0 MB | 3,453.5 MB |
+| **524,288** | *OOM (Requires 512GB+)* | **13,036.5 MB** | **13,292.7 MB** | **13,805.2 MB** |
+| **1,048,576** | *OOM (Requires 1.02TB+)* | *OOM (Exceeded 24GB)* | *OOM (Exceeded 24GB)* | *OOM (Exceeded 24GB)* |
+
 ---
+
 
 ## 🛠️ Reproduction & Verification
 

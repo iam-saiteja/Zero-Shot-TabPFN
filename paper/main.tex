@@ -168,6 +168,40 @@ As shown in Table \ref{tab:scaling_results}, Vanilla TabPFN encounters physical 
     \label{fig:scaling}
 \end{figure}
 
+\subsection{Server-Grade Extreme Scaling Limits}
+
+We further evaluate the proposed NSA-TabPFN on a server-grade NVIDIA GeForce RTX 3090 Ti (24GB VRAM) to measure the limits of dynamic context scaling. In this setting, the dataset is scaled dynamically from $N = 1,024$ doubling in each step until a physical Out-Of-Memory (OOM) error occurs. The results are summarized in Table \ref{tab:server_scaling_results}.
+
+\begin{table}[h]
+\centering
+\caption{Peak VRAM Footprint on NVIDIA GeForce RTX 3090 Ti (24GB VRAM)}
+\label{tab:server_scaling_results}
+\begin{tabular}{rcccc}
+\toprule
+Sequence Length ($N$) & Vanilla TabPFN & NSA ($M=64$) & NSA ($M=128$) & NSA ($M=256$) \\
+\midrule
+1,024    & 51.6 MB & 36.6 MB  & 28.5 MB  & 30.0 MB \\
+8,192    & 2,200.3 MB & 206.7 MB & 210.2 MB & 218.7 MB \\
+16,384   & 8,496.8 MB & 411.5 MB & 418.8 MB & 435.3 MB \\
+32,768   & \textit{Failed (OOM)} & 816.9 MB & 833.2 MB & 865.7 MB \\
+131,072  & \textit{Failed (OOM)} & 3,260.8 MB & 3,325.0 MB & 3,453.5 MB \\
+524,288  & \textit{Failed (OOM)} & \textbf{13,036.5 MB} & \textbf{13,292.7 MB} & \textbf{13,805.2 MB} \\
+1,048,576& \textit{Failed (OOM)} & \textit{Failed (OOM)} & \textit{Failed (OOM)} & \textit{Failed (OOM)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As presented in Table \ref{tab:server_scaling_results}, Vanilla TabPFN encounters physical OOM crashes past 16,384 rows on the 24GB GPU, requiring more memory than the frame buffer can support. In contrast, NSA-TabPFN successfully scales sequence length to over half a million ($N=524,288$) rows using only $\sim$13.8 GB of VRAM, showcasing linear $\mathcal{O}(NM)$ memory growth.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.48\textwidth]{assets/server_extreme_scaling_time.png}
+    \includegraphics[width=0.48\textwidth]{assets/server_extreme_scaling_memory.png}
+    \caption{Dynamic latency scaling (left) and VRAM memory footprint (right) on the NVIDIA GeForce RTX 3090 Ti GPU across $M \in \{64, 128, 256\}$ configurations compared to the Vanilla TabPFN baseline.}
+    \label{fig:server_scaling}
+\end{figure}
+
+
 \section{Conclusion}
 
 Zero-Shot Nystr\"om TabPFN (NSA-TabPFN) provides a mathematically sound, post-hoc row attention wrapper for pre-trained tabular foundation models. By implementing a softmax-weighted Nyst\"om projection, NSA-TabPFN preserves the pre-trained embedding space and maintains evaluation accuracy while reducing attention complexity to linear time. NSA-TabPFN allows tabular foundation models to scale zero-shot inference to contexts containing hundreds of thousands of rows on constrained consumer hardware.
