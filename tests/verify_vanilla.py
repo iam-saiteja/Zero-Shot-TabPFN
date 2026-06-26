@@ -5,6 +5,32 @@ from sklearn.datasets import load_breast_cancer
 from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
+# --- PYTORCH COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
+import typing
+import torch.nn.modules.transformer
+torch.nn.modules.transformer.Optional = typing.Optional
+# ---------------------------------------------------
+
+# --- SCIKIT-LEARN COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
+import sklearn.utils.validation
+import sklearn.utils
+_original_check_X_y = sklearn.utils.validation.check_X_y
+_original_check_array = sklearn.utils.validation.check_array
+
+def _patched_check_X_y(*args, **kwargs):
+    kwargs.pop('force_all_finite', None)
+    return _original_check_X_y(*args, **kwargs)
+
+def _patched_check_array(*args, **kwargs):
+    kwargs.pop('force_all_finite', None)
+    return _original_check_array(*args, **kwargs)
+
+sklearn.utils.validation.check_X_y = _patched_check_X_y
+sklearn.utils.validation.check_array = _patched_check_array
+sklearn.utils.check_X_y = _patched_check_X_y
+sklearn.utils.check_array = _patched_check_array
+# ----------------------------------------------------------
+
 from tabpfn import TabPFNClassifier
 
 def main() -> None:
@@ -22,7 +48,7 @@ def main() -> None:
     )
 
     print("Initializing TabPFNClassifier...")
-    clf = TabPFNClassifier(device="auto", show_progress_bar=True)
+    clf = TabPFNClassifier(device="cpu")
 
     print("Fitting model (caching prompt)...")
     clf.fit(X_train, y_train)

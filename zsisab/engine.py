@@ -34,71 +34,41 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
             train_rows = src_[:N]
             test_rows = src_[N:]
 
-            # Only activate ISAB when there's meaningful compression to be had.
-            # For N <= 4*M, dense attention is fast enough and strictly more accurate.
-            # ZS-ISAB targets the regime where N >> M (thousands+ rows).
-            if N <= 4 * M:
-                # Dense attention (identical to vanilla TabPFN)
-                src_left = self.self_attn(train_rows, train_rows, train_rows)[0]
-                src_right = self.self_attn(test_rows, train_rows, train_rows)[0]
-                src2 = torch.cat([src_left, src_right], dim=0)
+            # Let's perform ZS-ISAB across all sequence lengths.
+            is_batch_first = self.self_attn.batch_first
+
+            if is_batch_first:
+                train_for_chunk = train_rows          # [B, N, E]
             else:
-                # --- ZERO-SHOT ISAB ---
+                train_for_chunk = train_rows.transpose(0, 1)  # [N, B, E] -> [B, N, E]
 
-                is_batch_first = self.self_attn.batch_first
+            B, seq_N, E = train_for_chunk.shape
 
-                if is_batch_first:
-                    train_for_chunk = train_rows          # [B, N, E]
-                else:
-                    train_for_chunk = train_rows.transpose(0, 1)  # [N, B, E] -> [B, N, E]
-
-                B, seq_N, E = train_for_chunk.shape
-
-                # 1. Prototype Generation — Deterministic, no row dropping
-                #    Fixed seed ensures all 12 transformer layers see the same prototypes.
+            # Engage ZS-ISAB if N > M. Otherwise, use exact dense training rows as prototypes.
+            if seq_N > M:
+                print(f"[Layer] Using ZS-ISAB (N={seq_N} -> M={M})")
+                
+                # Deterministic selection of actual representative rows
                 generator = torch.Generator(device=train_for_chunk.device)
                 generator.manual_seed(42)
                 perm = torch.randperm(seq_N, device=train_for_chunk.device, generator=generator)
+                
+                # Slice actual rows directly. This preserves exact feature distributions, 
+                # covariance, and norms, avoiding the CLT variance collapse of chunked averaging.
+                selected_indices = perm[:M]
+                proto_init = train_for_chunk[:, selected_indices] # [B, M, E]
+            else:
+                # If training size is smaller than M, use all training rows (effectively dense)
+                proto_init = train_for_chunk
 
-                chunk_size = max(1, seq_N // M)
+            if not is_batch_first:
+                proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
 
-                # Build prototypes ensuring ALL rows are used
-                if seq_N <= M * chunk_size:
-                    # Exact fit or fewer rows: pad by repeating
-                    if seq_N < M * chunk_size:
-                        pad_count = M * chunk_size - seq_N
-                        perm = torch.cat([perm, perm[:pad_count]])
-                    gathered = train_for_chunk[:, perm[:M * chunk_size]]
-                    gathered = gathered.view(B, M, chunk_size, E)
-                    proto_init = gathered.mean(dim=2)  # [B, M, E]
-                else:
-                    # More rows than fit evenly: give remainder to last chunk
-                    main_count = (M - 1) * chunk_size
-                    main_gathered = train_for_chunk[:, perm[:main_count]]
-                    main_gathered = main_gathered.view(B, M - 1, chunk_size, E)
-                    main_protos = main_gathered.mean(dim=2)  # [B, M-1, E]
+            # Evaluate queries against the selected representative prototypes
+            src_left = self.self_attn(train_rows, proto_init, proto_init)[0]
+            src_right = self.self_attn(test_rows, proto_init, proto_init)[0]
 
-                    last_chunk = train_for_chunk[:, perm[main_count:]]  # [B, remainder, E]
-                    last_proto = last_chunk.mean(dim=1, keepdim=True)   # [B, 1, E]
-
-                    proto_init = torch.cat([main_protos, last_proto], dim=1)  # [B, M, E]
-
-                # 2. Norm Alignment — mean-only correction
-                #    Shift prototypes to match the training set mean without touching variance.
-                #    Averaging naturally reduces variance (CLT), and that's correct behavior.
-                if use_norm_alignment:
-                    train_mean = train_for_chunk.mean(dim=1, keepdim=True)   # [B, 1, E]
-                    proto_mean = proto_init.mean(dim=1, keepdim=True)        # [B, 1, E]
-                    proto_init = proto_init - proto_mean + train_mean
-
-                if not is_batch_first:
-                    proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
-
-                # Evaluate queries against prototypes (standard ISAB: K=proto, V=proto)
-                src_left = self.self_attn(train_rows, proto_init, proto_init)[0]
-                src_right = self.self_attn(test_rows, proto_init, proto_init)[0]
-
-                src2 = torch.cat([src_left, src_right], dim=0)
+            src2 = torch.cat([src_left, src_right], dim=0)
 
         else:
             # Fallback for all other masking (training, global, etc.)

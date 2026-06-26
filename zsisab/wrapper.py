@@ -8,7 +8,7 @@ from zsisab.engine import get_zsisab_encoder_forward
 if not hasattr(tabpfn_layer.TransformerEncoderLayer, "_original_forward"):
     tabpfn_layer.TransformerEncoderLayer._original_forward = tabpfn_layer.TransformerEncoderLayer.forward
 
-def inject_zsisab_into_tabpfn(num_prototypes: int = 128, use_logit_scaling: bool = True, use_norm_alignment: bool = True):
+def inject_zsisab_into_tabpfn(num_prototypes: int = 128, use_logit_scaling: bool = True, use_norm_alignment: bool = True, verbose: bool = False):
     """
     Monkey-patches TabPFN's TransformerEncoderLayer to intercept zero-shot evaluation
     and compress the context to O(N x M) using Zero-Shot ISAB.
@@ -22,11 +22,13 @@ def inject_zsisab_into_tabpfn(num_prototypes: int = 128, use_logit_scaling: bool
     )
     
     tabpfn_layer.TransformerEncoderLayer.forward = patched_fn
-    print(f"✅ Zero-Shot ISAB successfully injected into TabPFN TransformerEncoderLayer with M={num_prototypes}.")
+    if verbose:
+        print(f"✅ Zero-Shot ISAB successfully injected into TabPFN TransformerEncoderLayer with M={num_prototypes}.")
 
-def restore_vanilla_tabpfn():
+def restore_vanilla_tabpfn(verbose: bool = False):
     """
     Restores the original TabPFN TransformerEncoderLayer.
     """
     tabpfn_layer.TransformerEncoderLayer.forward = tabpfn_layer.TransformerEncoderLayer._original_forward
-    print("🔄 Restored vanilla TabPFN.")
+    if verbose:
+        print("🔄 Restored vanilla TabPFN.")
