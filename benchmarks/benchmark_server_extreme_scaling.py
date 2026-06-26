@@ -38,6 +38,12 @@ def apply_patches():
     sklearn.utils.check_X_y = patched_check_X_y
     sklearn.utils.check_array = patched_check_array
 
+# --- HARDWARE DETECTION ---
+def get_hardware_name():
+    if torch.cuda.is_available():
+        return torch.cuda.get_device_name(0)
+    return "CPU"
+
 # --- SUBPROCESS INDIVIDUAL TRIAL EXECUTION ---
 def run_single_trial(model_name, N, M):
     apply_patches()
@@ -89,10 +95,9 @@ def run_single_trial(model_name, N, M):
 
 # --- PARENT COORDINATOR ---
 def run_coordinator():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Starting Multi-Process Extreme Scaling Benchmark on ({device})")
+    hw_name = get_hardware_name()
+    print(f"Starting Multi-Process Extreme Scaling Benchmark on: {hw_name}")
     
-    # List of configurations to run
     configs = [
         ('NSA-TabPFN (M=64)', 'NSA-TabPFN', 64),
         ('NSA-TabPFN (M=128)', 'NSA-TabPFN', 128),
@@ -109,7 +114,6 @@ def run_coordinator():
         while True:
             print(f"Spawning trial for N = {N:,} rows...")
             
-            # Call self as a subprocess for isolation
             cmd = [
                 sys.executable, __file__,
                 "--run-trial",
@@ -133,7 +137,7 @@ def run_coordinator():
                     results.append({
                         'Model': label, 'N': N, 
                         'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                        'Accuracy': np.nan, 'Status': f'Crashed/OOM ({err_msg})'
+                        'Accuracy': np.nan, 'Hardware': hw_name, 'Status': f'Crashed/OOM ({err_msg})'
                     })
                     break
                 
@@ -152,7 +156,7 @@ def run_coordinator():
                     results.append({
                         'Model': label, 'N': N, 
                         'Latency (s)': metrics['time'], 'Peak Memory (MB)': metrics['mem'],
-                        'Accuracy': metrics['acc'], 'Status': 'Success'
+                        'Accuracy': metrics['acc'], 'Hardware': hw_name, 'Status': 'Success'
                     })
                     
                     # Double the size
@@ -162,7 +166,7 @@ def run_coordinator():
                     results.append({
                         'Model': label, 'N': N, 
                         'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                        'Accuracy': np.nan, 'Status': 'Silent Exit'
+                        'Accuracy': np.nan, 'Hardware': hw_name, 'Status': 'Silent Exit'
                     })
                     break
                     
@@ -171,7 +175,7 @@ def run_coordinator():
                 results.append({
                     'Model': label, 'N': N, 
                     'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                    'Accuracy': np.nan, 'Status': 'Timeout'
+                    'Accuracy': np.nan, 'Hardware': hw_name, 'Status': 'Timeout'
                 })
                 break
             except Exception as e:
@@ -204,7 +208,7 @@ def run_coordinator():
         plt.yscale('log', base=10)
         plt.xlabel('Sequence Length N (Rows)')
         plt.ylabel('Execution Time (seconds)')
-        plt.title('Dynamic Inference Latency Scaling Limit')
+        plt.title(f'Dynamic Inference Latency Scaling Limit ({hw_name})')
         plt.grid(True, which="both", ls="--", alpha=0.5)
         plt.tight_layout()
         plt.savefig('assets/server_extreme_scaling_time.png', dpi=300)
@@ -217,7 +221,7 @@ def run_coordinator():
         plt.xscale('log', base=2)
         plt.xlabel('Sequence Length N (Rows)')
         plt.ylabel('Peak Memory Allocation (MB)')
-        plt.title('Dynamic Peak Memory Allocation Scaling Limit')
+        plt.title(f'Dynamic Peak Memory Allocation Scaling Limit ({hw_name})')
         plt.grid(True, which="both", ls="--", alpha=0.5)
         plt.tight_layout()
         plt.savefig('assets/server_extreme_scaling_memory.png', dpi=300)
