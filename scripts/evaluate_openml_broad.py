@@ -12,7 +12,12 @@ from sklearn.metrics import accuracy_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from evaluate import clear_gpu
+
+def clear_gpu():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
 
 # Patch TabPFN for Zero-Shot ISAB
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2

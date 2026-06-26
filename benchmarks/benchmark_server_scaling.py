@@ -8,7 +8,12 @@ import sys
 import numpy as np
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from evaluate import clear_gpu
+
+def clear_gpu():
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    import gc
+    gc.collect()
 
 # Patch TabPFN for ZS-ISAB
 import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
