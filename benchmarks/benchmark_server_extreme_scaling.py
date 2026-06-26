@@ -56,29 +56,17 @@ def generate_synthetic_data(n_samples, n_features=20):
     y = (X[:, 0] + X[:, 1] > 0).long()
     return X.numpy(), y.numpy()
 
-def run_extreme_server_scaling():
+def run_unlimited_scaling():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Running Extreme Server Scaling Benchmark on 24GB GPU ({device})")
-    
-    # Scale from 262k up to 8.3 Million rows
-    row_counts = [262144, 524288, 1048576, 2097152, 4194304, 8388608]
+    print(f"Running Dynamic Unlimited Scaling Benchmark on ({device})")
     
     results = []
     
     for model_name in ['Vanilla TabPFN', 'NSA-TabPFN']:
-        print(f"\n--- Benchmarking Model: {model_name} ---")
+        print(f"\n=== Benchmarking Model: {model_name} ===")
         
-        for N in row_counts:
-            # Short-circuit Vanilla TabPFN because it is quadratic and will immediately crash/freeze on server at large N
-            if model_name == 'Vanilla TabPFN' and N > 65536:
-                print(f"Skipping Vanilla TabPFN for N = {N:,} rows (quadratic OOM boundary).")
-                results.append({
-                    'Model': model_name, 'N': N, 
-                    'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                    'Accuracy': np.nan, 'Status': 'OOM (Skipped)'
-                })
-                continue
-                
+        N = 1024
+        while True:
             print(f"Evaluating N = {N:,} rows...")
             clear_gpu()
             if torch.cuda.is_available():
@@ -115,13 +103,19 @@ def run_extreme_server_scaling():
                     'Latency (s)': exec_time, 'Peak Memory (MB)': peak_mem,
                     'Accuracy': acc, 'Status': 'Success'
                 })
+                
+                # Double the dataset size
+                N *= 2
+                
             except Exception as e:
-                print(f"Model {model_name} failed/OOM on N = {N:,}: {str(e)}")
+                err_msg = str(e)
+                print(f"Model {model_name} hit resource ceiling/OOM on N = {N:,}: {err_msg}")
                 results.append({
                     'Model': model_name, 'N': N, 
                     'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                    'Accuracy': np.nan, 'Status': f'Failed/OOM ({str(e)})'
+                    'Accuracy': np.nan, 'Status': f'Failed/OOM ({err_msg})'
                 })
+                # Stop scaling this model and break to the next one
                 break
                 
     # Restore to clean state
@@ -146,7 +140,7 @@ def run_extreme_server_scaling():
         plt.yscale('log', base=10)
         plt.xlabel('Sequence Length N (Rows)')
         plt.ylabel('Execution Time (seconds)')
-        plt.title('Extreme Inference Latency Scaling Limit (RTX 3090 Ti 24GB)')
+        plt.title('Dynamic Inference Latency Scaling Limit')
         plt.grid(True, which="both", ls="--", alpha=0.5)
         plt.tight_layout()
         plt.savefig('assets/server_extreme_scaling_time.png', dpi=300)
@@ -159,7 +153,7 @@ def run_extreme_server_scaling():
         plt.xscale('log', base=2)
         plt.xlabel('Sequence Length N (Rows)')
         plt.ylabel('Peak VRAM Allocation (MB)')
-        plt.title('Extreme Peak VRAM Allocation Scaling Limit (RTX 3090 Ti 24GB)')
+        plt.title('Dynamic Peak VRAM Allocation Scaling Limit')
         plt.grid(True, which="both", ls="--", alpha=0.5)
         plt.tight_layout()
         plt.savefig('assets/server_extreme_scaling_memory.png', dpi=300)
@@ -170,4 +164,4 @@ def run_extreme_server_scaling():
         print("\nNo successful runs to plot.")
 
 if __name__ == "__main__":
-    run_extreme_server_scaling()
+    run_unlimited_scaling()
