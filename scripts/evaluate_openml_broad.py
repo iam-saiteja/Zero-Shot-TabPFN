@@ -142,7 +142,7 @@ def evaluate_broad():
             if torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
             from zsisab.wrapper import inject_zsisab_into_tabpfn
-            inject_zsisab_into_tabpfn(num_prototypes=32)
+            inject_zsisab_into_tabpfn(num_prototypes=128)
             
             start_mem = get_peak_memory()
             start_time = time.time()

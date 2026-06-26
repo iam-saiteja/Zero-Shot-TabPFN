@@ -44,27 +44,35 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
 
             B, seq_N, E = train_for_chunk.shape
 
-            # Engage ZS-ISAB if N > M. Otherwise, use exact dense training rows as prototypes.
+            # Engage ZS-ISAB if N > M. Otherwise, use exact dense training rows.
             if seq_N > M:
                 print(f"[Layer] Using ZS-ISAB (N={seq_N} -> M={M})")
                 
-                # Deterministic selection of actual representative rows
+                # 1. Deterministic selection of prototype anchor locations
                 generator = torch.Generator(device=train_for_chunk.device)
                 generator.manual_seed(42)
                 perm = torch.randperm(seq_N, device=train_for_chunk.device, generator=generator)
-                
-                # Slice actual rows directly. This preserves exact feature distributions, 
-                # covariance, and norms, avoiding the CLT variance collapse of chunked averaging.
                 selected_indices = perm[:M]
-                proto_init = train_for_chunk[:, selected_indices] # [B, M, E]
+                
+                prototypes = train_for_chunk[:, selected_indices] # [B, M, E]
+                
+                # 2. Compute similarity/interpolation weights W [B, N, M]
+                #    Measures how each of the N training rows maps onto the M prototypes.
+                scale = 1.0 / math.sqrt(E)
+                scores = torch.bmm(train_for_chunk, prototypes.transpose(1, 2)) * scale  # [B, N, M]
+                W = F.softmax(scores, dim=1)  # Normalize across N dimension -> [B, N, M]
+                
+                # 3. Project Key and Value vectors down to size M [B, M, E]
+                #    This pools details from all N training rows into the M slots.
+                proto_init = torch.bmm(W.transpose(1, 2), train_for_chunk)  # [B, M, E]
+                
+                if not is_batch_first:
+                    proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
             else:
                 # If training size is smaller than M, use all training rows (effectively dense)
-                proto_init = train_for_chunk
+                proto_init = train_rows
 
-            if not is_batch_first:
-                proto_init = proto_init.transpose(0, 1)  # [B, M, E] -> [M, B, E]
-
-            # Evaluate queries against the selected representative prototypes
+            # Evaluate queries against the constructed prototypes (K=proto_init, V=proto_init)
             src_left = self.self_attn(train_rows, proto_init, proto_init)[0]
             src_right = self.self_attn(test_rows, proto_init, proto_init)[0]
 
