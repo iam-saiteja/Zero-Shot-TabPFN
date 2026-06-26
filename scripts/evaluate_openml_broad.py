@@ -19,10 +19,13 @@ def clear_gpu():
     import gc
     gc.collect()
 
-from tabpfn import TabPFNClassifier
-from tabpfn.constants import ModelVersion
+# --- PYTORCH COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
+import typing
+import torch.nn.modules.transformer
+torch.nn.modules.transformer.Optional = typing.Optional
+# ---------------------------------------------------
 
-os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8Vo4"
+from tabpfn import TabPFNClassifier
 
 warnings.filterwarnings('ignore')
 
@@ -67,7 +70,7 @@ def evaluate_broad():
             from zsisab.wrapper import restore_vanilla_tabpfn
             restore_vanilla_tabpfn()
             
-            clf_vanilla = TabPFNClassifier.create_default_for_version(ModelVersion.V2_5, device=device)
+            clf_vanilla = TabPFNClassifier(device=device, N_ensemble_configurations=1)
             clf_vanilla.fit(X_train, y_train)
             probs_v = clf_vanilla.predict_proba(X_test)
             preds_v = clf_vanilla.predict(X_test)
@@ -80,7 +83,7 @@ def evaluate_broad():
             from zsisab.wrapper import inject_zsisab_into_tabpfn
             inject_zsisab_into_tabpfn(num_prototypes=128)
             
-            clf_isab = TabPFNClassifier.create_default_for_version(ModelVersion.V2_5, device=device)
+            clf_isab = TabPFNClassifier(device=device, N_ensemble_configurations=1)
             clf_isab.fit(X_train, y_train)
             probs_i = clf_isab.predict_proba(X_test)
             preds_i = clf_isab.predict(X_test)

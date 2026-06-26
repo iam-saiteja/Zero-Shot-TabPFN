@@ -15,10 +15,13 @@ def clear_gpu():
     import gc
     gc.collect()
 
-from tabpfn import TabPFNClassifier
-from tabpfn.constants import ModelVersion
+# --- PYTORCH COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
+import typing
+import torch.nn.modules.transformer
+torch.nn.modules.transformer.Optional = typing.Optional
+# ---------------------------------------------------
 
-os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8Vo4"
+from tabpfn import TabPFNClassifier
 
 def get_vram_usage():
     if torch.cuda.is_available():
@@ -43,7 +46,7 @@ def run_extreme_scaling():
     times = []
     vrams = []
     
-    clf = TabPFNClassifier.create_default_for_version(ModelVersion.V2_5, device=device)
+    clf = TabPFNClassifier(device=device, N_ensemble_configurations=1)
     
     for N in row_counts:
         print(f"\\nEvaluating N = {N:,} rows...")
