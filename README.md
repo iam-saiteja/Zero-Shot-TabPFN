@@ -1,5 +1,7 @@
 # Zero-Shot ISAB (Ours): Refined Inducing Point Attention for Tabular Transformers
 
+![Zero-Shot ISAB Architecture](assets/zsisab_architecture.png)
+
 This repository contains a **zero-shot compatible, linear-complexity row attention wrapper** for pre-trained tabular transformers (such as TabPFN). 
 
 Our implementation of **Zero-Shot ISAB (Ours)** (Refined Inducing Point Attention) scales to extremely long sequence contexts ($N > 500,000$ rows) on standard consumer hardware, completely bypassing the quadratic $O(N^2)$ memory and time bottlenecks of dense attention, while maintaining a negligible accuracy/ROC AUC tradeoff (typically **<0.6%**).
@@ -88,7 +90,7 @@ Our model exhibits perfect **linear complexity $O(N)$ scaling**, allowing it to 
 1. Clone the repository:
    ```bash
    git clone <repository_url>
-   cd MSA
+   cd Zero-Shot-ISAB
    ```
 2. Install dependencies:
    ```bash
