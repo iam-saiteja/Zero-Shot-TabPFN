@@ -25,6 +25,17 @@ import torch.nn.modules.transformer
 torch.nn.modules.transformer.Optional = typing.Optional
 # ---------------------------------------------------
 
+# --- SCIKIT-LEARN COMPATIBILITY PATCH FOR TABPFN 0.1.11 ---
+import sklearn.utils.validation
+original_check_X_y = sklearn.utils.validation.check_X_y
+def patched_check_X_y(*args, **kwargs):
+    kwargs.pop('force_all_finite', None)
+    return original_check_X_y(*args, **kwargs)
+sklearn.utils.validation.check_X_y = patched_check_X_y
+import sklearn.utils
+sklearn.utils.check_X_y = patched_check_X_y
+# ----------------------------------------------------------
+
 from tabpfn import TabPFNClassifier
 
 warnings.filterwarnings('ignore')
