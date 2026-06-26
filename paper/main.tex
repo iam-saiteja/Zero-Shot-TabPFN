@@ -70,6 +70,27 @@ We evaluate query representations using a single cross-attention pass:
 \end{equation}
 This formulation ensures that all $N$ context samples contribute to the representation. Because the key and value projections ($W_K$ and $W_V$) are applied exactly once inside the attention block, the features remain in the correct latent subspace, preventing representation collapse.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{assets/nystrom_vs_nsa.png}
+    \caption{Structural adaptations of NSA-TabPFN compared to standard Nystr{\"o}mformer, highlighting the stable softmax mapping and elimination of Moore-Penrose pseudo-inverses.}
+    \label{fig:nystrom_vs_nsa}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{assets/single_pass_projection.png}
+    \caption{Visualizing the Single-Pass Key/Value Compression path of NSA-TabPFN vs. the double-projection collapse mechanism of standard two-stage attention blocks.}
+    \label{fig:single_pass}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{assets/seeded_anchor_selection.png}
+    \caption{Deterministic Seeded Anchor Selection vs. segment-averaging. Selecting actual raw context rows directly preserves embedding manifolds, avoiding Central Limit Theorem variance collapse.}
+    \label{fig:anchor_selection}
+\end{figure}
+
 \section{Experiments}
 
 We evaluate NSA-TabPFN locally on an NVIDIA GeForce RTX 3050 Laptop GPU (4GB VRAM) running PyTorch 2.5.1 with CUDA 12.1. 
@@ -103,6 +124,20 @@ Dataset & Metric & Vanilla TabPFN & NSA ($M=64$) & NSA ($M=128$) & NSA ($M=256$)
 
 NSA-TabPFN ($M=256$) yields near-parity accuracy (matching within 0.2\% on average) while reducing the VRAM memory footprint by over 70\% on larger context sizes.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{assets/evaluation_accuracy.png}
+    \caption{Zero-shot classification accuracy comparison of NSA-TabPFN vs. Vanilla TabPFN across the OpenML classification suite.}
+    \label{fig:eval_accuracy}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.85\textwidth]{assets/ablation_study.png}
+    \caption{Ablation study showing average classification accuracy across the OpenML suite for different bottleneck sizes $M$ of NSA-TabPFN vs. Vanilla TabPFN.}
+    \label{fig:ablation}
+\end{figure}
+
 \subsection{Physical VRAM Scaling Limits}
 
 To verify linear complexity, we scale sequence lengths side-by-side up to 262,144 rows on the local 4GB GPU:
@@ -125,6 +160,13 @@ Sequence Rows ($N$) & Vanilla TabPFN VRAM & NSA-TabPFN ($M=128$) VRAM & Status \
 \end{table}
 
 As shown in Table \ref{tab:scaling_results}, Vanilla TabPFN encounters physical Out-Of-Memory (OOM) failures past 8,192 rows due to its quadratic scaling. In contrast, NSA-TabPFN scales context length linearly to 262,144 rows.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{assets/million_row_scaling.png}
+    \caption{Linear-complexity time scaling curve for NSA-TabPFN compared to Vanilla TabPFN on increasing training sequence lengths $N$ (RTX 3050 Laptop GPU).}
+    \label{fig:scaling}
+\end{figure}
 
 \section{Conclusion}
 
