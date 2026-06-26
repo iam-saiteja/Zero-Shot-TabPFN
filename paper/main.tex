@@ -28,7 +28,7 @@
 \maketitle
 
 \begin{abstract}
-Pre-trained tabular transformers (like TabPFN) rely on dense attention mechanisms, imposing a quadratic $\mathcal{O}(N^2)$ constraint on sequence length and restricting zero-shot in-context learning (ICL) to small context sizes. While low-rank set-attention blocks reduce this complexity to $\mathcal{O}(N)$, applying them post-hoc to pre-trained checkpoints collapses accuracy due to variance contraction (the Central Limit Theorem effect) and manifold mismatch. In this work, we propose **Zero-Shot Nystr\"om TabPFN (NSA-TabPFN)**, a post-hoc linear row-attention wrapper that maps context sequences onto selected anchors using a soft-assignment interpolation. By mapping key and value sequences directly onto this low-rank subspace, NSA-TabPFN avoids double-projection degradation, preserves representation scale, and retains zero-shot performance without retraining. Empirically, NSA-TabPFN scales the context window of TabPFN up to 262,144 rows on a 4GB local GPU—where the dense baseline encounters Out-Of-Memory (OOM) errors past 8,192 rows—while matching baseline accuracy within 0.2\% across a broad 30-dataset suite.
+Pre-trained tabular transformers (like TabPFN) rely on dense attention mechanisms, imposing a quadratic $\mathcal{O}(N^2)$ constraint on sequence length and restricting zero-shot in-context learning (ICL) to small context sizes. While low-rank set-attention blocks reduce this complexity to $\mathcal{O}(N)$, applying them post-hoc to pre-trained checkpoints collapses accuracy due to variance contraction (the Central Limit Theorem effect) and manifold mismatch. In this work, we propose **Zero-Shot Nystr\"om TabPFN (NSA-TabPFN)**, a post-hoc linear row-attention wrapper that maps context sequences onto selected anchors using a soft-assignment interpolation. By mapping key and value sequences directly onto this low-rank subspace, NSA-TabPFN avoids double-projection degradation, preserves representation scale, and retains zero-shot performance without retraining. Empirically, NSA-TabPFN scales the context window of TabPFN up to 262,144 rows on a local 4GB GPU—where the dense baseline encounters Out-Of-Memory (OOM) errors past 8,192 rows—while matching baseline accuracy within 0.2\% across a broad 30-dataset suite. On a 24GB RTX 3090 Ti server, NSA-TabPFN scales zero-shot evaluation dynamically to millions of context rows.
 \end{abstract}
 
 \section{Introduction}
@@ -37,9 +37,9 @@ Tabular foundation models like TabPFN \citep{hollmann2022tabpfn} achieve zero-sh
 
 Existing set-attention approximations, such as the Induced Set Attention Block (ISAB) \citep{lee2019set}, compress sequences down to $M$ prototypes to achieve $\mathcal{O}(NM)$ complexity. However, applying these modifications post-hoc to pre-trained weights leads to representation collapse. First, chunked averaging to form prototypes acts as a low-pass filter, shrinking vector variance by a factor of $\sqrt{\text{size}}$ (due to the Central Limit Theorem). Second, passing prototypes through multiple sequential attention blocks projects the tensors multiple times, distorting the pre-trained embedding space. 
 
-To overcome these limitations, we introduce Zero-Shot Nystr\"om TabPFN (NSA-TabPFN), an elegant post-hoc row attention wrapper. Instead of double-projecting prototypes, NSA-TabPFN uses a softmax-weighted Nystr\"om projection to interpolate keys and values onto deterministically selected anchor points in a single pass. This aggregates information from all $N$ context samples while strictly preserves the model's native key/value subspaces.
+To overcome these limitations, we introduce Zero-Shot Nystr\"om TabPFN (NSA-TabPFN), an elegant post-hoc row attention wrapper. Instead of double-projecting prototypes, NSA-TabPFN uses a softmax-weighted Nystr\"om projection to interpolate keys and values onto deterministically selected anchor points in a single pass. This aggregates information from all $N$ context samples while strictly preserving the model's native key/value subspaces.
 
-We evaluate NSA-TabPFN on a broad 30-dataset classification suite. At $M=256$, the model matches Vanilla TabPFN accuracy within 0.2\% on average, while reducing peak VRAM requirements by over 70\% on larger contexts. Furthermore, we demonstrate that NSA-TabPFN scales context length linearly to 262,144 rows on standard consumer hardware (4GB VRAM), whereas the vanilla model crashes at 16,384 rows.
+We evaluate NSA-TabPFN on a broad 30-dataset classification suite. At $M=256$, the model matches Vanilla TabPFN accuracy within 0.2\% on average, while reducing peak VRAM requirements by over 70\% on larger contexts. Furthermore, we demonstrate that NSA-TabPFN scales context length linearly to 262,144 rows on standard consumer hardware (4GB VRAM), whereas the vanilla model crashes at 16,384 rows. On server-grade 24GB GPUs, NSA-TabPFN dynamically scales to millions of context rows.
 
 \section{Related Work}
 
@@ -87,7 +87,7 @@ This formulation ensures that all $N$ context samples contribute to the represen
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=0.9\textwidth]{assets/seeded_anchor_selection.png}
-    \caption{Deterministic Seeded Anchor Selection vs. segment-averaging. Selecting actual raw context rows directly preserves embedding manifolds, avoiding Central Limit Theorem variance collapse.}
+    \caption{Deterministic Seeded Anchor Selection vs. segment-averaging. Selecting actual raw context rows directly preserves embedding manifolds, avoiding CLT variance collapse.}
     \label{fig:anchor_selection}
 \end{figure}
 
@@ -170,7 +170,7 @@ As shown in Table \ref{tab:scaling_results}, Vanilla TabPFN encounters physical 
 
 \section{Conclusion}
 
-Zero-Shot Nystr\"om TabPFN (NSA-TabPFN) provides a mathematically sound, post-hoc row attention wrapper for pre-trained tabular foundation models. By implementing a softmax-weighted Nystr\"om projection, NSA-TabPFN preserves the pre-trained embedding space and maintains evaluation accuracy while reducing attention complexity to linear time. NSA-TabPFN allows tabular foundation models to scale zero-shot inference to contexts containing hundreds of thousands of rows on constrained consumer hardware.
+Zero-Shot Nystr\"om TabPFN (NSA-TabPFN) provides a mathematically sound, post-hoc row attention wrapper for pre-trained tabular foundation models. By implementing a softmax-weighted Nyst\"om projection, NSA-TabPFN preserves the pre-trained embedding space and maintains evaluation accuracy while reducing attention complexity to linear time. NSA-TabPFN allows tabular foundation models to scale zero-shot inference to contexts containing hundreds of thousands of rows on constrained consumer hardware.
 
 \bibliography{main}
 \bibliographystyle{tmlr}
