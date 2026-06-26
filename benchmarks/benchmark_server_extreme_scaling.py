@@ -8,9 +8,12 @@ import os
 import sys
 import numpy as np
 import pandas as pd
+import subprocess
+import json
 
 # Append workspace path to system path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'tests')))
 
 # --- COMPATIBILITY PATCHES ---
 import typing
@@ -54,24 +57,58 @@ def generate_synthetic_data(n_samples, n_features=20):
     y = (X[:, 0] + X[:, 1] > 0).long()
     return X.numpy(), y.numpy()
 
-def run_unlimited_single_process_scaling():
+def run_single_eval(model_name, M, N):
+    """Executes a single scale evaluation and prints raw JSON result for parent to read."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if model_name == 'Vanilla TabPFN':
+        restore_vanilla_tabpfn()
+    else:
+        inject_nsatabpfn(num_prototypes=M)
+
+    try:
+        X_train, y_train = generate_synthetic_data(N)
+        X_test, y_test = generate_synthetic_data(100)
+        
+        clf = TabPFNClassifier(device=device, N_ensemble_configurations=1)
+        
+        start_mem = get_vram_usage()
+        start_time = time.time()
+        
+        clf.fit(X_train, y_train, overwrite_warning=True)
+        probs = clf.predict_proba(X_test)
+        
+        exec_time = time.time() - start_time
+        peak_mem = max(0.0, get_vram_usage() - start_mem)
+        
+        preds = probs.argmax(axis=1)
+        acc = (preds == y_test).mean()
+        
+        result = {
+            'Status': 'Success',
+            'Latency (s)': round(exec_time, 4),
+            'Peak Memory (MB)': round(peak_mem, 2),
+            'Accuracy': round(float(acc), 4)
+        }
+    except Exception as e:
+        result = {
+            'Status': 'Failed',
+            'Error': str(e)
+        }
+    
+    # Restore clean state
+    restore_vanilla_tabpfn()
+    print(f"JSON_RESULT:{json.dumps(result)}")
+
+def run_unlimited_scaling():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     hw_name = get_hardware_name()
     
     print("=" * 70)
-    print("NSA-TABPFN EXTREME SCALING BENCHMARK SUITE")
+    print("NSA-TABPFN EXTREME SCALING BENCHMARK SUITE (SUBPROCESS RUNNER)")
     print("=" * 70)
     print(f"Target Hardware : {hw_name}")
     print(f"Device Active   : {device.upper()}")
     print("Dataset Profile : Synthetic Tabular Classification (20 features, binary labels)")
-    
-    if not torch.cuda.is_available():
-        print("\n" + "!" * 70)
-        print("WARNING: CUDA is NOT active in PyTorch. The benchmark is running on CPU.")
-        print("To run on the RTX 3090 Ti GPU, reinstall PyTorch matching your CUDA 12.2 driver:")
-        print("  uv pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu121")
-        print("!" * 70 + "\n")
-        
     print("=" * 70)
     
     configs = [
@@ -85,74 +122,73 @@ def run_unlimited_single_process_scaling():
     
     for label, model_name, M in configs:
         print(f"\n=== Benchmarking Configuration: {label} ===")
-        
         N = 1024
         while True:
             print(f"Evaluating N = {N:,} rows...")
             
-            # 1. Clean memory before execution
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.reset_peak_memory_stats()
+            # Spawn subprocess to isolate GPU memory allocations completely
+            cmd = [
+                sys.executable,
+                __file__,
+                "--subprocess",
+                model_name,
+                str(M),
+                str(N)
+            ]
             
-            # 2. Inject patch or restore vanilla
-            if model_name == 'Vanilla TabPFN':
-                restore_vanilla_tabpfn()
-            else:
-                inject_nsatabpfn(num_prototypes=M)
-                
-            # 3. Run evaluation inside try/except block
             try:
-                X_train, y_train = generate_synthetic_data(N)
-                X_test, y_test = generate_synthetic_data(100)
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
                 
-                clf = TabPFNClassifier(device=device, N_ensemble_configurations=1)
+                # Parse output to find the JSON result marker
+                json_str = None
+                for line in proc.stdout.splitlines():
+                    if line.startswith("JSON_RESULT:"):
+                        json_str = line[len("JSON_RESULT:"):]
+                        break
                 
-                start_mem = get_vram_usage()
-                start_time = time.time()
-                
-                clf.fit(X_train, y_train, overwrite_warning=True)
-                probs = clf.predict_proba(X_test)
-                
-                exec_time = time.time() - start_time
-                peak_mem = max(0.0, get_vram_usage() - start_mem)
-                
-                preds = probs.argmax(axis=1)
-                acc = (preds == y_test).mean()
-                
-                print(f"-> Success: {exec_time:.2f}s, Peak Memory: {peak_mem:.2f} MB, Acc: {acc:.4f}")
-                results.append({
-                    'Model': label, 'N': N, 
-                    'Latency (s)': exec_time, 'Peak Memory (MB)': peak_mem,
-                    'Accuracy': acc, 'Hardware': hw_name, 'Status': 'Success'
-                })
-                
-                # Free memory immediately
-                del clf, X_train, y_train, X_test, y_test, probs
-                
-                # Double sequence length
-                N *= 2
-                
-            except Exception as e:
-                err_msg = str(e)
-                print(f"-> Configuration {label} hit resource ceiling/OOM on N = {N:,}: {err_msg}")
+                if json_str:
+                    res = json.loads(json_str)
+                    if res['Status'] == 'Success':
+                        print(f"-> Success: {res['Latency (s)']}s, Peak Memory: {res['Peak Memory (MB)']} MB, Acc: {res['Accuracy']}")
+                        results.append({
+                            'Model': label, 'N': N, 
+                            'Latency (s)': res['Latency (s)'], 'Peak Memory (MB)': res['Peak Memory (MB)'],
+                            'Accuracy': res['Accuracy'], 'Hardware': hw_name, 'Status': 'Success'
+                        })
+                        N *= 2
+                    else:
+                        err_msg = res['Error']
+                        print(f"-> Failed/OOM: {err_msg}")
+                        results.append({
+                            'Model': label, 'N': N, 
+                            'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
+                            'Accuracy': np.nan, 'Hardware': hw_name, 'Status': f'Failed/OOM ({err_msg})'
+                        })
+                        break
+                else:
+                    # No JSON result found: process crashed or failed silently
+                    err_msg = proc.stderr.strip() or "Subprocess crashed silently."
+                    print(f"-> Crash/OOM: {err_msg}")
+                    results.append({
+                        'Model': label, 'N': N, 
+                        'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
+                        'Accuracy': np.nan, 'Hardware': hw_name, 'Status': f'Failed/OOM ({err_msg})'
+                    })
+                    break
+            except subprocess.TimeoutExpired:
+                print("-> Timeout Expired (exceeded 300s)")
                 results.append({
                     'Model': label, 'N': N, 
                     'Latency (s)': np.nan, 'Peak Memory (MB)': np.nan,
-                    'Accuracy': np.nan, 'Hardware': hw_name, 'Status': f'Failed/OOM ({err_msg})'
+                    'Accuracy': np.nan, 'Hardware': hw_name, 'Status': 'Timeout'
                 })
-                
-                # Clear references on exception
-                try:
-                    del clf, X_train, y_train, X_test, y_test
-                except:
-                    pass
                 break
                 
-    # Restore to clean state
-    restore_vanilla_tabpfn()
-            
     # Save raw data
     if results:
         df = pd.DataFrame(results)
@@ -173,28 +209,30 @@ def run_unlimited_single_process_scaling():
         # Time comparison
         plt.figure(figsize=(10, 6))
         df_plot_time = df.dropna(subset=['Latency (s)'])
-        sns.lineplot(data=df_plot_time, x='N', y='Latency (s)', hue='Model', marker='o', linewidth=2.5, palette=colors)
-        plt.xscale('log', base=2)
-        plt.yscale('log', base=10)
-        plt.xlabel('Sequence Length N (Rows)')
-        plt.ylabel('Execution Time (seconds)')
-        plt.title(f'Dynamic Inference Latency Scaling Limit ({hw_name})')
-        plt.grid(True, which="both", ls="--", alpha=0.5)
-        plt.tight_layout()
-        plt.savefig('assets/server_extreme_scaling_time.png', dpi=300)
+        if not df_plot_time.empty:
+            sns.lineplot(data=df_plot_time, x='N', y='Latency (s)', hue='Model', marker='o', linewidth=2.5, palette=colors)
+            plt.xscale('log', base=2)
+            plt.yscale('log', base=10)
+            plt.xlabel('Sequence Length N (Rows)')
+            plt.ylabel('Execution Time (seconds)')
+            plt.title(f'Dynamic Inference Latency Scaling Limit ({hw_name})')
+            plt.grid(True, which="both", ls="--", alpha=0.5)
+            plt.tight_layout()
+            plt.savefig('assets/server_extreme_scaling_time.png', dpi=300)
         plt.close()
         
         # Memory comparison
         plt.figure(figsize=(10, 6))
         df_plot_mem = df.dropna(subset=['Peak Memory (MB)'])
-        sns.lineplot(data=df_plot_mem, x='N', y='Peak Memory (MB)', hue='Model', marker='s', linewidth=2.5, linestyle='--', palette=colors)
-        plt.xscale('log', base=2)
-        plt.xlabel('Sequence Length N (Rows)')
-        plt.ylabel('Peak Memory Allocation (MB)')
-        plt.title(f'Dynamic Peak Memory Allocation Scaling Limit ({hw_name})')
-        plt.grid(True, which="both", ls="--", alpha=0.5)
-        plt.tight_layout()
-        plt.savefig('assets/server_extreme_scaling_memory.png', dpi=300)
+        if not df_plot_mem.empty:
+            sns.lineplot(data=df_plot_mem, x='N', y='Peak Memory (MB)', hue='Model', marker='s', linewidth=2.5, linestyle='--', palette=colors)
+            plt.xscale('log', base=2)
+            plt.xlabel('Sequence Length N (Rows)')
+            plt.ylabel('Peak Memory Allocation (MB)')
+            plt.title(f'Dynamic Peak Memory Allocation Scaling Limit ({hw_name})')
+            plt.grid(True, which="both", ls="--", alpha=0.5)
+            plt.tight_layout()
+            plt.savefig('assets/server_extreme_scaling_memory.png', dpi=300)
         plt.close()
         
         print("Generated scaling charts in assets/")
@@ -202,4 +240,10 @@ def run_unlimited_single_process_scaling():
         print("\nNo successful runs to plot.")
 
 if __name__ == "__main__":
-    run_unlimited_single_process_scaling()
+    if len(sys.argv) > 1 and sys.argv[1] == "--subprocess":
+        model_name = sys.argv[2]
+        M = int(sys.argv[3])
+        N = int(sys.argv[4])
+        run_single_eval(model_name, M, N)
+    else:
+        run_unlimited_scaling()
