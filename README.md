@@ -19,6 +19,9 @@ In accordance with rigorous empirical standards, the claims made in this work ar
 
 ## 🚀 Core Innovation: Zero-Shot Nyström Projection
 
+![NSA Architecture](assets/nsa_architecture.png)
+
+
 TabPFN maps in-context tabular datasets into transformer sequences, acting as a learned kernel regression machine. Standard set compression models (like Set Transformers) typically average sequences or use learnable inducing points, both of which degrade performance post-hoc due to variance contraction or manifold mismatches.
 
 Our implementation uses **Zero-Shot Nyström Projection (NSA-TabPFN)**, which dynamically maps the full context onto selected anchor points:
