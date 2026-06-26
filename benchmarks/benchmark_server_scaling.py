@@ -15,11 +15,6 @@ def clear_gpu():
     import gc
     gc.collect()
 
-# Patch TabPFN for ZS-ISAB
-import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
-import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
-import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from zsisab.engine import AlongColumnAttentionTwoPass
 from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 
@@ -40,17 +35,8 @@ def run_extreme_scaling():
     print(f"Running Extreme Scaling Benchmark on {device}")
     
     # Enable ZS-ISAB
-    class ExtremeISAB(AlongColumnAttentionTwoPass):
-        def __init__(self, *args, **kwargs):
-            kwargs["num_prototypes"] = 128
-            super().__init__(*args, **kwargs)
-            
-    tabpfn_v2.AlongColumnAttention = ExtremeISAB
-    tabpfn_v2_5.AlongColumnAttention = ExtremeISAB
-    tabpfn_v2_6.AlongColumnAttention = ExtremeISAB
-    
-    original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
-    tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
+    from zsisab.wrapper import inject_zsisab_into_tabpfn
+    inject_zsisab_into_tabpfn(num_prototypes=128)
     
     # Scale from 65k to 8.3 Million
     row_counts = [65536, 262144, 1048576, 4194304, 8388608]

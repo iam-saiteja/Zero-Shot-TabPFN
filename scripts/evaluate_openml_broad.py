@@ -19,20 +19,13 @@ def clear_gpu():
     import gc
     gc.collect()
 
-# Patch TabPFN for Zero-Shot ISAB
-import tabpfn.architectures.tabpfn_v2 as tabpfn_v2
-import tabpfn.architectures.tabpfn_v2_5 as tabpfn_v2_5
-import tabpfn.architectures.tabpfn_v2_6 as tabpfn_v2_6
-from zsisab.engine import AlongColumnAttentionTwoPass
 from tabpfn import TabPFNClassifier
 from tabpfn.constants import ModelVersion
 
 os.environ["TABPFN_TOKEN"] = "tabpfn_sk_WDvw1MHEYQRQz8NKJBMqEFoink8X-sagyYRMKWM8Vo4"
 
-# Ignore sklearn and openml warnings for clean output
 warnings.filterwarnings('ignore')
 
-# Dataset list (OpenML CC-18 subset)
 DATASETS = [
     ('breast-cancer', 13),
     ('credit-g', 31),
@@ -48,22 +41,14 @@ def load_and_prep(data_id):
     data = fetch_openml(data_id=data_id, as_frame=True)
     X = data.data
     y = data.target
-    # Handle categoricals natively for TabPFN
     for col in X.columns:
         if X[col].dtype == 'category' or X[col].dtype == 'object':
             X[col] = X[col].astype('category').cat.codes
-    
-    # Fill NAs
     X = X.fillna(0)
-    
-    # Binary classification check
     le = LabelEncoder()
     y = le.fit_transform(y)
-    
     if len(set(y)) > 2:
-        # For simplicity in ROC AUC across many datasets, we'll binarize multiclass
         y = (y > 0).astype(int)
-        
     return train_test_split(X, y, test_size=0.33, random_state=42)
 
 def evaluate_broad():
@@ -79,8 +64,8 @@ def evaluate_broad():
             
             # 1. Vanilla TabPFN
             clear_gpu()
-            importlib = __import__("importlib")
-            importlib.reload(tabpfn_v2_5)
+            from zsisab.wrapper import restore_vanilla_tabpfn
+            restore_vanilla_tabpfn()
             
             clf_vanilla = TabPFNClassifier.create_default_for_version(ModelVersion.V2_5, device=device)
             clf_vanilla.fit(X_train, y_train)
@@ -92,17 +77,8 @@ def evaluate_broad():
             
             # 2. Zero-Shot ISAB
             clear_gpu()
-            class TempISAB(AlongColumnAttentionTwoPass):
-                def __init__(self, *args, **kwargs):
-                    kwargs["num_prototypes"] = 128
-                    super().__init__(*args, **kwargs)
-            
-            tabpfn_v2.AlongColumnAttention = TempISAB
-            tabpfn_v2_5.AlongColumnAttention = TempISAB
-            tabpfn_v2_6.AlongColumnAttention = TempISAB
-            
-            original_load_v2_5 = tabpfn_v2_5.TabPFNV2p5.load_state_dict
-            tabpfn_v2_5.TabPFNV2p5.load_state_dict = lambda self, sd, strict=True, assign=False: original_load_v2_5(self, sd, strict=False, assign=assign)
+            from zsisab.wrapper import inject_zsisab_into_tabpfn
+            inject_zsisab_into_tabpfn(num_prototypes=128)
             
             clf_isab = TabPFNClassifier.create_default_for_version(ModelVersion.V2_5, device=device)
             clf_isab.fit(X_train, y_train)
@@ -114,6 +90,7 @@ def evaluate_broad():
             
             print(f"Vanilla: Acc={acc_v:.4f}, AUC={auc_v:.4f}")
             print(f"ZS-ISAB: Acc={acc_i:.4f}, AUC={auc_i:.4f}")
+            restore_vanilla_tabpfn()
             
         except Exception as e:
             print(f"Failed on {name}: {str(e)}")
@@ -124,7 +101,6 @@ def evaluate_broad():
         df.to_csv("broad_evaluation_results.csv", index=False)
         print("\\nResults saved to broad_evaluation_results.csv")
         
-        # Plotting
         os.makedirs("assets", exist_ok=True)
         plt.figure(figsize=(14, 6))
         sns.barplot(data=df, x='Dataset', y='Accuracy', hue='Model')
