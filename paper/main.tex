@@ -1,0 +1,152 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{tmlr}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{caption}
+
+\input{math_commands.tex}
+
+\title{Zero-Shot ISAB: Refined Inducing Point Attention \\ for Tabular Transformers}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the tmlr package is used without the [accepted] or [preprint] options.
+\author{\name Sai Teja \\
+      \addr 
+      Independent Researcher}
+
+\def\month{MM}  % Insert correct month for camera-ready version
+\def\year{YYYY} % Insert correct year for camera-ready version
+\def\openreview{\url{https://openreview.net/forum?id=XXXX}} % Insert correct link to OpenReview for camera-ready version
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Pre-trained tabular transformers rely on dense attention mechanisms, which impose a quadratic $\mathcal{O}(N^2)$ constraint on sequence length and limit inference to small datasets. While sparse architectures such as the Induced Set Attention Block (ISAB) reduce this complexity to $\mathcal{O}(N)$, applying them retroactively to pre-trained models shifts activation distributions and collapses zero-shot accuracy. In this work, we propose Zero-Shot ISAB (ZS-ISAB), a linear-complexity row attention wrapper that preserves the pre-trained manifold without requiring any fine-tuning. We introduce two mathematical corrections: Norm Alignment in projection space to restore prototype magnitudes, and Dynamic Logit Scaling to preserve attention entropy. Furthermore, we align test-query execution pathways with the Multi-Query Attention (MQA) heads of the base model. Empirically, ZS-ISAB extends the context limit of TabPFN up to 524,288 rows on a 4GB GPU—a limit at which the baseline physically exhausts memory—while maintaining strict evaluation parity (within 1\% ROC AUC) on benchmark tabular datasets. 
+\end{abstract}
+
+\section{Introduction}
+
+The application of transformers to tabular data has demonstrated strong zero-shot classification capabilities, particularly through architectures like TabPFN \citep{hollmann2022tabpfn}. These models process rows as tokens, allowing the attention mechanism to capture complex interactions across samples. However, standard self-attention mechanisms scale quadratically with respect to the sequence length $N$ \citep{vaswani2017attention}. For tabular datasets where $N$ frequently exceeds tens of thousands of rows, the $\mathcal{O}(N^2)$ memory and computational footprint renders dense attention architectures physically intractable on standard consumer hardware.
+
+To mitigate quadratic complexity, sparse approximations such as the Induced Set Attention Block (ISAB) compress the input sequence into a smaller set of $M$ prototypes \citep{lee2019set}. While ISAB reduces complexity to $\mathcal{O}(NM)$, its direct integration into pre-trained transformers introduces severe distribution shifts. Constructing prototypes via sequence averaging acts as a low-pass filter, shrinking vector norms. Additionally, distributing attention queries over $M$ keys instead of $N$ artificially inflates the softmax temperature, resulting in flattened attention distributions. Consequently, integrating ISAB historically necessitates comprehensive retraining or fine-tuning.
+
+In this paper, we introduce Zero-Shot ISAB (ZS-ISAB), an architecture wrapper that retroactively applies linear-complexity inducing point attention to pre-trained tabular transformers without any fine-tuning. We address the activation distribution shifts through two primary mathematical corrections: Norm Alignment, which dynamically rescales prototype distributions to match the training data manifold, and Logit Scaling, which corrects the entropy of the softmax broadcast pass based on the ratio of logarithmic sequence lengths. 
+
+We evaluate ZS-ISAB on real-world datasets and demonstrate that it retains the zero-shot accuracy of the dense baseline. Furthermore, we validate the theoretical $\mathcal{O}(N)$ complexity by scaling inference up to 524,288 rows on hardware strictly limited to 4GB of VRAM, completely bypassing the quadratic bottlenecks of the underlying model.
+
+\section{Related Work}
+
+\textbf{Tabular Transformers.} Tabular transformers process discrete and continuous features by treating dataset rows as individual tokens. Models like TabPFN are pre-trained on large-scale synthetic structural causal models, enabling them to generalize to novel datasets without gradient updates \citep{hollmann2022tabpfn}. However, their reliance on exact $\mathcal{O}(N^2)$ self-attention severely limits their maximum context window.
+
+\textbf{Linear and Sparse Attention.} Numerous methods have been proposed to linearize the attention matrix. \citet{katharopoulos2020transformers} approximate the softmax kernel using feature maps, expressing attention as a recurrent mechanism. Alternatively, Set Transformers \citep{lee2019set} introduce the ISAB mechanism, which projects $N$ tokens into $M$ trainable parameters (prototypes), reducing computation to $\mathcal{O}(NM)$. Despite these efficiency gains, applying these approximations to pre-trained weights without retraining disrupts the latent representation manifold.
+
+\textbf{Multi-Query Attention.} Multi-Query Attention (MQA) reduces memory bandwidth during autoregressive decoding by sharing a single key and value head across all query heads \citep{shazeer2019fast}. Pre-trained tabular models often utilize MQA for test queries to improve inference efficiency. Modifying the attention structure requires careful alignment with these expected pre-trained pathways.
+
+\section{Method: Zero-Shot ISAB}
+
+The primary objective of ZS-ISAB is to compress a training context of $N$ rows into $M$ prototypes such that the pre-trained attention layers remain mathematically stable and do not collapse to random initializations. Figure \ref{fig:corrections} illustrates the core corrections applied within the latent projection space.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{assets/mathematical_corrections.png}
+    \caption{Overview of the two primary mathematical corrections in ZS-ISAB. Left: Norm Alignment restores the standard deviation of prototype vectors to match the original data manifold. Right: Logit Scaling preserves attention sharpness by adjusting the pre-softmax temperature.}
+    \label{fig:corrections}
+\end{figure}
+
+\subsection{Prototype Generation and Vectorized Slicing}
+
+When the sequence length $N$ exceeds the prototype limit $M$, we generate initial prototypes $P$ by partitioning the training rows $X_{\text{train}} \in \mathbb{R}^{N \times E}$ into $M$ discrete chunks and computing the mean over the sequence dimension:
+\begin{equation}
+    P_m = \frac{1}{|C_m|} \sum_{i \in C_m} X_{\text{train}}^{(i)} \quad \text{for } m \in \{1, \dots, M\}
+\end{equation}
+where $C_m$ denotes a randomly permuted slice of the sequence. To optimize this operation, we utilize GPU-native parallel advanced indexing, which avoids sequential loop overheads. This vectorization optimization yields a 25.7x reduction in execution time for the prototype generation step, improving throughput on hardware accelerators.
+
+\subsection{Norm Alignment in Projection Space}
+
+Averaging vectors across chunks inherently acts as a low-pass filter, shifting the latent mean and compressing the standard deviation of the resulting prototypes relative to $X_{\text{train}}$. Passing these compressed vectors through the pre-trained query projections shifts the activations out-of-distribution, leading to accuracy collapse.
+
+To enforce distribution parity, we apply a Norm Alignment step immediately after prototype generation. Let $\mu_{X}, \sigma_{X} \in \mathbb{R}^E$ be the sequence-wise mean and standard deviation vectors of $X_{\text{train}}$, and $\mu_{P}, \sigma_{P} \in \mathbb{R}^E$ be the corresponding statistics of the raw prototypes $P$. We compute the aligned prototypes $P_{\text{aligned}}$ using the Hadamard product ($\odot$) for element-wise scaling:
+\begin{equation}
+    P_{\text{aligned}} = \left( \frac{P - \mu_{P}}{\sigma_{P}} \right) \odot \sigma_{X} + \mu_{X}
+\end{equation}
+This operation explicitly forces the prototypes back into the expected pre-trained manifold scale before attention computation occurs.
+
+\subsection{Dynamic Logit and Softmax Scaling}
+
+The attention mechanism evaluates the similarity between queries and keys divided by $\sqrt{d_k}$. When the sequence size is compressed from $N$ to $M$, the softmax probability mass is distributed over a substantially smaller subset of items. This artificially inflates the entropy of the attention distribution, flattening the output matrix and degrading the sharpness of the zero-shot inference.
+
+We correct this entropy shift by applying Dynamic Logit Scaling to the test queries $Q_{\text{test}}$. We dynamically scale the logits based on the ratio of logarithmic sequence lengths:
+\begin{equation}
+    \tau = \frac{1}{\sqrt{d_k}} \cdot \sqrt{\frac{\log N}{\log M}}
+\end{equation}
+\begin{equation}
+    \text{Attention}(Q_{\text{test}}, K_P, V_P) = \text{softmax}\left( \tau \cdot Q_{\text{test}} K_P^T \right) V_P
+\end{equation}
+This scaling adjusts the softmax temperature, restoring the correct entropy scale and maintaining the determinism of the pre-trained weights.
+
+\subsection{MQA Test-Query Isolation}
+
+Pre-trained models like TabPFN assume that test queries will utilize Multi-Query Attention, expecting only a single key/value head to be present in the cache. To strictly maintain this structural expectation, ZS-ISAB isolates test queries such that they only attend to the first head of the refined prototypes. Let $K_P^{(1)}$ and $V_P^{(1)}$ denote the key and value representations corresponding to the first attention head. The output for test queries is computed as:
+\begin{equation}
+    O_{\text{test}} = \text{softmax}\left( \tau \cdot Q_{\text{test}} \left(K_P^{(1)}\right)^T \right) V_P^{(1)}
+\end{equation}
+By bypassing multi-head interaction for test queries, we ensure strict compatibility with the downstream feed-forward networks of the underlying model.
+
+\section{Experiments}
+
+We evaluate ZS-ISAB on a standard consumer hardware setup consisting of an NVIDIA GeForce RTX 3050 A Laptop GPU with a hard limit of 4GB physical VRAM. 
+
+\subsection{Zero-Shot Performance Parity}
+
+To verify that ZS-ISAB does not degrade the zero-shot capabilities of the base model, we evaluate it against Vanilla TabPFN, a naive Linear Attention baseline, and an uncorrected ISAB baseline (without Norm Alignment and Logit Scaling) across standard OpenML tabular datasets (Breast Cancer, Credit-g, Diabetes).
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{assets/evaluation_accuracy.png}
+    \caption{Zero-Shot classification accuracy across standard OpenML datasets. ZS-ISAB strictly matches the Vanilla baseline, whereas the naive uncorrected ISAB baseline collapses.}
+    \label{fig:eval_acc}
+\end{figure}
+
+As shown in Figure \ref{fig:eval_acc}, the uncorrected ISAB configuration suffers significant degradation, falling to near-random chance accuracy. In contrast, ZS-ISAB accurately maintains the pre-trained representation, yielding strict parity with Vanilla TabPFN (typically trading $<1\%$ accuracy for full linear complexity).
+
+\subsection{Ablation Study of Mathematical Corrections}
+
+We conducted an ablation study to isolate the impact of our proposed mathematical corrections. We evaluated accuracy on the Breast Cancer dataset with $M=32$ prototypes. 
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{assets/ablation_study.png}
+    \caption{Ablation of mathematical corrections on the Breast Cancer dataset. Both corrections are strictly required to restore baseline zero-shot accuracy.}
+    \label{fig:ablation}
+\end{figure}
+
+Figure \ref{fig:ablation} demonstrates that removing either Norm Alignment or Logit Scaling severely degrades accuracy. Applying Logit Scaling partially restores sharpness (+20.9\%), and applying Norm Alignment stabilizes the manifold (+27.2\%). However, only the combination of both corrections (ZS-ISAB) allows the model to reach the Vanilla baseline accuracy threshold (0.984).
+
+\subsection{Linear Complexity Scaling Limits}
+
+To prove the $\mathcal{O}(N)$ scaling properties, we evaluated ZS-ISAB on synthetic causal datasets expanding exponentially from $N=65,536$ to $N=524,288$ rows. Vanilla TabPFN encounters Out-Of-Memory (OOM) errors on sequences longer than 32,768 rows due to its $\mathcal{O}(N^2)$ VRAM requirements.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.7\textwidth]{assets/million_row_scaling.png}
+    \caption{Execution Time (blue) and Peak VRAM (red) scaling logarithmically with sequence rows $N$. ZS-ISAB successfully evaluates 524,288 rows using 8.1GB of allocated memory (utilizing physical system paging on a 4GB GPU).}
+    \label{fig:scaling}
+\end{figure}
+
+As depicted in Figure \ref{fig:scaling}, execution time and VRAM usage scale linearly. At $N=524,288$, ZS-ISAB allocates 8.1GB of memory, utilizing system paging to complete inference on a strictly constrained 4GB GPU footprint. This represents an over 15x expansion in context capacity relative to the standard architecture limit.
+
+\section{Conclusion}
+
+Zero-Shot ISAB provides a mathematically sound, drop-in linear attention wrapper for pre-trained tabular transformers. By introducing Norm Alignment and Dynamic Logit Scaling, we successfully adapt the $\mathcal{O}(NM)$ inducing point architecture to strictly zero-shot environments, averting the severe out-of-distribution degradation that historically necessitates full model retraining. ZS-ISAB breaks the $\mathcal{O}(N^2)$ complexity barrier, allowing tabular foundation models to scale inference to contexts exceeding half a million rows on constrained hardware.
+
+\bibliography{main}
+\bibliographystyle{tmlr}
+
+\end{document}
