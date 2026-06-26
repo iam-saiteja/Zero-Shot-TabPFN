@@ -105,11 +105,34 @@ sizes = [65536, 131072, 262144, 524288, 1048576]
 print("=========================================")
 print("MILLION-ROW SCALING BENCHMARK (Zero-Shot ISAB)")
 print("=========================================")
+
+results_mil = []
 for size in sizes:
     t, vram, acc, auc, status = run_isab_benchmark(size)
     if status == "Success":
         print(f"N={size}: Acc={acc:.4f} AUC={auc:.4f} | Time={t:.1f}s VRAM={vram:.1f}MB")
+        results_mil.append({'Rows': size, 'Time': t, 'VRAM': vram})
     else:
         print(f"N={size} failed: {status}")
         break
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+if results_mil:
+    df_mil = pd.DataFrame(results_mil)
+    plt.figure(figsize=(10, 6))
+    plt.plot(df_mil['Rows'], df_mil['Time'], marker='o', color='blue', label='Time (s)')
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.title('Million-Row Scaling Benchmark: Time vs Rows (Log-Log)')
+    plt.xlabel('Number of Rows (N)')
+    plt.ylabel('Execution Time (seconds)')
+    plt.grid(True, which="both", ls="--")
+    plt.tight_layout()
+    plt.savefig('assets/million_row_scaling.png', dpi=300)
+    plt.close()
+    print("Saved assets/million_row_scaling.png")
+
 

@@ -84,3 +84,21 @@ print(f"Loop implementation (100 runs): {t_loop:.6f}s")
 print(f"Vectorized implementation (100 runs): {t_vec:.6f}s")
 print(f"Vectorization Speedup: {t_loop / t_vec:.1f}x")
 
+
+
+# 5. Generate Vectorization Speedup Plot
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+os.makedirs("assets", exist_ok=True)
+plt.figure(figsize=(8, 6))
+sns.barplot(x=['Sequential Loop', 'Vectorized Pipeline'], y=[t_loop, t_vec], palette=['#e74c3c', '#2ecc71'])
+plt.title(f'Chunk-Averaging Execution Time (100 runs)\nSpeedup: {t_loop/t_vec:.1f}x')
+plt.ylabel('Time (seconds)')
+for i, v in enumerate([t_loop, t_vec]):
+    plt.text(i, v + (t_loop*0.02), f'{v:.4f}s', ha='center', fontweight='bold')
+plt.tight_layout()
+plt.savefig('assets/vectorization_speedup.png', dpi=300)
+plt.close()
+print("Saved assets/vectorization_speedup.png")

@@ -233,3 +233,31 @@ print("\nRESULTS TABLE:")
 print(pd.DataFrame(results).to_markdown(index=False))
 clear_gpu()
 
+
+
+# --------------------
+# ABLATION PLOT LOGIC
+# --------------------
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+df = pd.DataFrame(results)
+os.makedirs("assets", exist_ok=True)
+plt.figure(figsize=(10, 6))
+
+df_ablation = df[df['M'].isin([32, 'Vanilla'])].copy()
+df_ablation['Config'] = df_ablation.apply(lambda row: 'Vanilla' if row['M'] == 'Vanilla' else ('Base ISAB' if not row['NormAlignment'] and not row['LogitScaling'] else ('+Logit Scaling' if not row['NormAlignment'] else ('+Norm Alignment' if not row['LogitScaling'] else 'ZS-ISAB (Both)'))), axis=1)
+
+sns.barplot(data=df_ablation, x='Config', y='Accuracy', palette='viridis', hue='Config')
+plt.title('Ablation Study: Impact of Mathematical Corrections (M=32)')
+plt.ylabel('Accuracy on Breast Cancer (Zero-Shot)')
+plt.ylim(0, 1.05)
+plt.axhline(y=df_ablation[df_ablation['Config']=='Vanilla']['Accuracy'].values[0] if 'Vanilla' in df_ablation['Config'].values else 0.95, color='r', linestyle='--', label='Vanilla Baseline')
+plt.legend()
+plt.tight_layout()
+plt.savefig('assets/ablation_study.png', dpi=300)
+plt.close()
+print("Saved assets/ablation_study.png")
+

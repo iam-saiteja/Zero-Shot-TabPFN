@@ -245,6 +245,54 @@ def main():
     print("\n==================== SCALING SCENARIO RESULTS ====================")
     print(df_scaling.to_markdown(index=False))
     df_scaling.to_csv("scaling_evaluation_results.csv", index=False)
+    generate_plots(df_results, df_scaling)
+
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+def generate_plots(df_results, df_scaling):
+    print("\n--- Generating Plots ---")
+    os.makedirs("assets", exist_ok=True)
+    
+    # 1. Accuracy Grouped Bar Chart
+    if not df_results.empty:
+        plt.figure(figsize=(12, 6))
+        sns.barplot(data=df_results, x='Dataset', y='Accuracy', hue='Model')
+        plt.title('Zero-Shot Accuracy Comparison Across Datasets')
+        plt.ylabel('Accuracy')
+        plt.ylim(0, 1.0)
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.tight_layout()
+        plt.savefig('assets/evaluation_accuracy.png', dpi=300)
+        plt.close()
+        print("Saved assets/evaluation_accuracy.png")
+
+    # 2. Scaling Performance Line Charts
+    if not df_scaling.empty:
+        # Time Scaling
+        plt.figure(figsize=(10, 6))
+        sns.lineplot(data=df_scaling, x='Rows', y='Time Mean (s)', hue='Model', marker='o')
+        plt.title('Execution Time vs Sequence Length (Linear Scaling)')
+        plt.ylabel('Time (seconds)')
+        plt.xlabel('Number of Rows (N)')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('assets/scaling_time.png', dpi=300)
+        plt.close()
+        print("Saved assets/scaling_time.png")
+        
+        # VRAM Scaling
+        plt.figure(figsize=(10, 6))
+        sns.lineplot(data=df_scaling, x='Rows', y='Peak VRAM Mean (MB)', hue='Model', marker='o')
+        plt.title('Peak VRAM vs Sequence Length (Linear Scaling)')
+        plt.ylabel('VRAM (MB)')
+        plt.xlabel('Number of Rows (N)')
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig('assets/scaling_vram.png', dpi=300)
+        plt.close()
+        print("Saved assets/scaling_vram.png")
 
 if __name__ == "__main__":
     main()
