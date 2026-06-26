@@ -2,23 +2,16 @@ import math
 import torch
 import torch.nn.functional as F
 
-def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, use_logit_scaling: bool = True, use_norm_alignment: bool = True):
+def get_nsa_encoder_forward(original_forward_fn, num_prototypes: int = 32):
     """
     Returns a monkey-patched forward function for tabpfn.layer.TransformerEncoderLayer.
     
-    Implements Zero-Shot Inducing-point Set Attention Block (ZS-ISAB) which compresses
-    the training context from O(N^2) to O(N*M) attention complexity while preserving
-    the pretrained TabPFN representations through:
-      1. Deterministic prototype generation via chunked averaging (no row dropping)
-      2. Mean-only norm alignment (preserves natural CLT variance reduction)
-      3. Conservative activation: only engages when N > 4*M to ensure sufficient
-         compression ratio and avoid distortion on small datasets
+    Implements Zero-Shot Nystrom Softmax Attention (NSA-TabPFN) which compresses
+    the training context from O(N^2) to O(N*M) attention complexity.
     
-    For small datasets (N <= 4*M), falls back to vanilla dense attention which is
-    already fast enough. ZS-ISAB provides its benefit on large-scale datasets
-    (thousands to hundreds of thousands of rows) where O(N^2) becomes prohibitive.
+    For small datasets (N <= M), falls back to vanilla dense attention.
     """
-    def zsisab_forward(self, src: torch.Tensor, src_mask=None, src_key_padding_mask=None) -> torch.Tensor:
+    def nsa_forward(self, src: torch.Tensor, src_mask=None, src_key_padding_mask=None) -> torch.Tensor:
         if self.pre_norm:
             src_ = self.norm1(src)
         else:
@@ -34,7 +27,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
             train_rows = src_[:N]
             test_rows = src_[N:]
 
-            # Let's perform ZS-ISAB across all sequence lengths.
+            # Perform NSA across sequence lengths
             is_batch_first = self.self_attn.batch_first
 
             if is_batch_first:
@@ -44,10 +37,8 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
 
             B, seq_N, E = train_for_chunk.shape
 
-            # Engage ZS-ISAB if N > M. Otherwise, use exact dense training rows.
+            # Engage NSA if N > M. Otherwise, use exact dense training rows.
             if seq_N > M:
-                print(f"[Layer] Using ZS-ISAB (N={seq_N} -> M={M})")
-                
                 # 1. Deterministic selection of prototype anchor locations
                 generator = torch.Generator(device=train_for_chunk.device)
                 generator.manual_seed(42)
@@ -57,7 +48,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
                 prototypes = train_for_chunk[:, selected_indices] # [B, M, E]
                 
                 # 2. Compute similarity/interpolation weights W [B, N, M]
-                #    Measures how each of the N training rows maps onto the M prototypes.
+                #    Measures how each of the N training rows maps onto the M anchors.
                 scale = 1.0 / math.sqrt(E)
                 scores = torch.bmm(train_for_chunk, prototypes.transpose(1, 2)) * scale  # [B, N, M]
                 W = F.softmax(scores, dim=1)  # Normalize across N dimension -> [B, N, M]
@@ -99,4 +90,4 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 32, us
             src = self.norm2(src)
         return src
 
-    return zsisab_forward
+    return nsa_forward

@@ -64,7 +64,7 @@ def run_extreme_scaling():
     
     results = []
     
-    for model_name in ['Vanilla TabPFN', 'Zero-Shot ISAB']:
+    for model_name in ['Vanilla TabPFN', 'NSA-TabPFN']:
         print(f"\n--- Benchmarking Model: {model_name} ---")
         
         for N in row_counts:
@@ -74,11 +74,11 @@ def run_extreme_scaling():
                 torch.cuda.reset_peak_memory_stats()
             
             # Inject or Restore
-            from zsisab.wrapper import restore_vanilla_tabpfn, inject_zsisab_into_tabpfn
+            from nsatabpfn.wrapper import restore_vanilla_tabpfn, inject_nsatabpfn
             if model_name == 'Vanilla TabPFN':
                 restore_vanilla_tabpfn()
             else:
-                inject_zsisab_into_tabpfn(num_prototypes=128)
+                inject_nsatabpfn(num_prototypes=128)
                 
             try:
                 X_train, y_train = generate_synthetic_data(N)
@@ -109,7 +109,7 @@ def run_extreme_scaling():
                 break
                 
     # Restore to clean state
-    from zsisab.wrapper import restore_vanilla_tabpfn
+    from nsatabpfn.wrapper import restore_vanilla_tabpfn
     restore_vanilla_tabpfn()
             
     # Save raw data

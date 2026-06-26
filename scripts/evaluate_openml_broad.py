@@ -57,7 +57,7 @@ from tabpfn import TabPFNClassifier
 
 warnings.filterwarnings('ignore')
 
-# 18 Datasets (Original 8 + 10 New standard OpenML datasets)
+# 30 standard diverse classification datasets (skipping nomao which has 118 features > 100 max)
 DATASETS = [
     # Original 8
     ('breast-cancer', 13),
@@ -68,7 +68,7 @@ DATASETS = [
     ('pc1', 1068),
     ('haberman', 43),
     ('blood-transfusion', 1464),
-    # 10 New diverse ones
+    # 10 previously added
     ('phoneme', 1489),
     ('spambase', 44),
     ('qsar-biodeg', 1494),
@@ -78,13 +78,32 @@ DATASETS = [
     ('eeg-eye-state', 1471),
     ('wall-robot-navigation', 1497),
     ('bank-marketing', 1461),
-    ('nomao', 1486)
+    # 13 additional diverse classification datasets to reach 30 target (excluding nomao)
+    ('wine', 187),
+    ('page-blocks', 30),
+    ('segment', 36),
+    ('steel-plates-fault', 1504),
+    ('first-order-theorem-proving', 1475),
+    ('gas-drift', 1476),
+    ('wilt', 1441),
+    ('balance-scale', 11),
+    ('analcatdata_authorship', 457),
+    ('dna', 40670),
+    ('car', 40975),
+    ('tic-tac-toe', 50),
+    ('madelon', 1110)
 ]
 
 def load_and_prep(data_id):
     data = fetch_openml(data_id=data_id, as_frame=True)
     X = data.data
     y = data.target
+    
+    # Restrict feature count to TabPFN max limits (100 features) dynamically
+    if X.shape[1] > 100:
+        # Select first 100 columns
+        X = X.iloc[:, :100]
+        
     for col in X.columns:
         if X[col].dtype == 'category' or X[col].dtype == 'object':
             X[col] = X[col].astype('category').cat.codes
@@ -102,7 +121,7 @@ def load_and_prep(data_id):
 
 def evaluate_broad():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Running Broad OpenML Evaluation on {device}")
+    print(f"Running Broad 30-Dataset Evaluation on {device}...")
     
     results = []
     
@@ -110,13 +129,13 @@ def evaluate_broad():
         print(f"\n--- Evaluating Dataset: {name} ---")
         try:
             X_train, X_test, y_train, y_test = load_and_prep(data_id)
-            print(f"Dataset size: Train N={len(X_train)}, Features={X_train.shape[1]}")
+            print(f"Size: Train N={len(X_train)}, Features={X_train.shape[1]}")
             
-            # 1. Vanilla TabPFN
+            # 1. Vanilla TabPFN Baseline
             clear_gpu()
             if torch.cuda.is_available():
                 torch.cuda.reset_peak_memory_stats()
-            from zsisab.wrapper import restore_vanilla_tabpfn
+            from nsatabpfn.wrapper import restore_vanilla_tabpfn
             restore_vanilla_tabpfn()
             
             start_mem = get_peak_memory()
@@ -136,34 +155,35 @@ def evaluate_broad():
                 'Accuracy': acc_v, 'ROC AUC': auc_v, 
                 'Latency (s)': latency_v, 'Peak Memory (MB)': peak_mem_v
             })
-            
-            # 2. Zero-Shot ISAB
-            clear_gpu()
-            if torch.cuda.is_available():
-                torch.cuda.reset_peak_memory_stats()
-            from zsisab.wrapper import inject_zsisab_into_tabpfn
-            inject_zsisab_into_tabpfn(num_prototypes=128)
-            
-            start_mem = get_peak_memory()
-            start_time = time.time()
-            
-            clf_isab = TabPFNClassifier(device=device, N_ensemble_configurations=1)
-            clf_isab.fit(X_train, y_train, overwrite_warning=True)
-            probs_i = clf_isab.predict_proba(X_test)
-            preds_i = clf_isab.predict(X_test)
-            
-            latency_i = time.time() - start_time
-            peak_mem_i = max(0.0, get_peak_memory() - start_mem)
-            acc_i = accuracy_score(y_test, preds_i)
-            auc_i = roc_auc_score(y_test, probs_i[:, 1])
-            results.append({
-                'Dataset': name, 'Model': 'Zero-Shot ISAB', 
-                'Accuracy': acc_i, 'ROC AUC': auc_i, 
-                'Latency (s)': latency_i, 'Peak Memory (MB)': peak_mem_i
-            })
-            
             print(f"Vanilla: Acc={acc_v:.4f}, AUC={auc_v:.4f}, Time={latency_v:.2f}s, Mem={peak_mem_v:.1f}MB")
-            print(f"ZS-ISAB: Acc={acc_i:.4f}, AUC={auc_i:.4f}, Time={latency_i:.2f}s, Mem={peak_mem_i:.1f}MB")
+            
+            # 2. NSA-TabPFN at M = [64, 128, 256]
+            from nsatabpfn.wrapper import inject_nsatabpfn
+            for M in [64, 128, 256]:
+                clear_gpu()
+                if torch.cuda.is_available():
+                    torch.cuda.reset_peak_memory_stats()
+                inject_nsatabpfn(num_prototypes=M)
+                
+                start_mem = get_peak_memory()
+                start_time = time.time()
+                
+                clf_nsa = TabPFNClassifier(device=device, N_ensemble_configurations=1)
+                clf_nsa.fit(X_train, y_train, overwrite_warning=True)
+                probs_i = clf_nsa.predict_proba(X_test)
+                preds_i = clf_nsa.predict(X_test)
+                
+                latency_i = time.time() - start_time
+                peak_mem_i = max(0.0, get_peak_memory() - start_mem)
+                acc_i = accuracy_score(y_test, preds_i)
+                auc_i = roc_auc_score(y_test, probs_i[:, 1])
+                results.append({
+                    'Dataset': name, 'Model': f'NSA-TabPFN (M={M})', 
+                    'Accuracy': acc_i, 'ROC AUC': auc_i, 
+                    'Latency (s)': latency_i, 'Peak Memory (MB)': peak_mem_i
+                })
+                print(f"NSA-TabPFN (M={M}): Acc={acc_i:.4f}, AUC={auc_i:.4f}, Time={latency_i:.2f}s, Mem={peak_mem_i:.1f}MB")
+                
             restore_vanilla_tabpfn()
             
         except Exception as e:
@@ -177,13 +197,20 @@ def evaluate_broad():
         df.to_csv("broad_evaluation_results.csv", index=False)
         print("\nResults saved to broad_evaluation_results.csv")
         
+        # Display side-by-side results in console as a clean pivoted table
+        pivoted = df.pivot(index='Dataset', columns='Model', values=['Accuracy', 'ROC AUC', 'Latency (s)', 'Peak Memory (MB)'])
+        pd.set_option('display.max_columns', None)
+        pd.set_option('display.width', 1000)
+        print("\n=== CONSOLIDATED 30-DATASET EVALUATION RESULTS ===")
+        print(pivoted)
+        
         os.makedirs("assets", exist_ok=True)
-        device_label = "RTX 3090 Ti" if torch.cuda.is_available() else "Server CPU"
+        device_label = "RTX 3050 Laptop" if torch.cuda.is_available() else "CPU"
         
         # Accuracy plot
-        plt.figure(figsize=(14, 6))
+        plt.figure(figsize=(16, 7))
         sns.barplot(data=df, x='Dataset', y='Accuracy', hue='Model')
-        plt.title(f'Zero-Shot Accuracy Comparison Across Broad OpenML Suite ({device_label})')
+        plt.title(f'NSA-TabPFN vs Vanilla Accuracy Comparison Across 30 Datasets ({device_label})')
         plt.ylabel('Zero-Shot Accuracy')
         plt.ylim(0, 1.05)
         plt.xticks(rotation=45)
@@ -192,10 +219,10 @@ def evaluate_broad():
         plt.savefig('assets/broad_evaluation_accuracy.png', dpi=300)
         plt.close()
         
-        # Memory/Time plot
-        plt.figure(figsize=(14, 6))
+        # Latency plot
+        plt.figure(figsize=(16, 7))
         sns.barplot(data=df, x='Dataset', y='Latency (s)', hue='Model')
-        plt.title(f'Inference Latency Comparison Across Broad OpenML Suite ({device_label})')
+        plt.title(f'NSA-TabPFN vs Vanilla Latency Comparison Across 30 Datasets ({device_label})')
         plt.ylabel('Latency (seconds)')
         plt.xticks(rotation=45)
         plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')

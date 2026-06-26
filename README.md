@@ -80,8 +80,8 @@ Evaluating sequence lengths $N$ side-by-side until execution failure:
 ### Installation
 1. Clone this repository:
    ```bash
-   git clone https://github.com/iam-saiteja/Zero-Shot-ISAB.git
-   cd Zero-Shot-ISAB
+   git clone https://github.com/iam-saiteja/NSA-TabPFN.git
+   cd NSA-TabPFN
    ```
 2. Set up the virtual environment and stable dependencies via `uv`:
    ```bash
