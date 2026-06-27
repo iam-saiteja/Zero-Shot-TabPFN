@@ -35,6 +35,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, c
 
             train_rows = src_[:, :N, :]
 
+            # Select M prototypes
             generator = torch.Generator(device=src_.device)
             generator.manual_seed(42)
             perm = torch.randperm(N, device=src_.device, generator=generator)
@@ -42,9 +43,12 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, c
             
             I = train_rows[:, selected_indices, :]
             
-            Q_I = F.linear(I, W_q, b_q)
-            Q_I = Q_I.view(B, M, num_heads, head_dim).transpose(1, 2)
+            # Prototype Queries and Keys
+            Q_I = F.linear(I, W_q, b_q).view(B, M, num_heads, head_dim).transpose(1, 2)
+            K_I = F.linear(I, W_k, b_k).view(B, M, num_heads, head_dim).transpose(1, 2)
             
+            # --- STAGE 1: POOLING (Online Softmax) ---
+            # H_attn = softmax(Q_I @ K_train.T) @ V_train
             H_num = torch.zeros((B, num_heads, M, head_dim), device=src_.device)
             H_max = torch.full((B, num_heads, M, 1), -float('inf'), device=src_.device)
             H_den = torch.zeros((B, num_heads, M, 1), device=src_.device)
@@ -68,13 +72,10 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, c
                 
                 H_max = new_max
 
-            H_attn = H_num / H_den
-            H_attn = H_attn.transpose(1, 2).contiguous().view(B, M, E)
-            H = self.self_attn.out_proj(H_attn)
+            H_attn = H_num / H_den  # [B, num_heads, M, head_dim]
 
-            K_H = F.linear(H, W_k, b_k).view(B, M, num_heads, head_dim).transpose(1, 2)
-            V_H = F.linear(H, W_v, b_v).view(B, M, num_heads, head_dim).transpose(1, 2)
-
+            # --- STAGE 2: CHUNKED BROADCAST & MLP ---
+            # X_out = softmax(Q_X @ K_I.T) @ H_attn
             output_chunks = []
             src_original = src
             
@@ -93,20 +94,26 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, c
                     src_norm_chunk = src_norm_chunk.transpose(0, 1)
                     
                 Q_chunk = F.linear(src_norm_chunk, W_q, b_q).view(B, -1, num_heads, head_dim).transpose(1, 2)
-                scores = torch.matmul(Q_chunk, K_H.transpose(-2, -1)) / math.sqrt(head_dim)
+                
+                # Broadcast attention
+                scores = torch.matmul(Q_chunk, K_I.transpose(-2, -1)) / math.sqrt(head_dim)
                 attn_weights = F.softmax(scores, dim=-1)
                 
-                attn_out = torch.matmul(attn_weights, V_H)
+                attn_out = torch.matmul(attn_weights, H_attn)
                 attn_out = attn_out.transpose(1, 2).contiguous().view(B, -1, E)
+                
+                # Apply the original out_proj
                 attn_out = self.self_attn.out_proj(attn_out)
                 
                 if not is_batch_first:
                     attn_out = attn_out.transpose(0, 1)
                     
+                # Residual 1 + Norm 1
                 src_chunk = src_chunk + self.dropout1(attn_out)
                 if not self.pre_norm:
                     src_chunk = self.norm1(src_chunk)
                     
+                # MLP Layer
                 if self.pre_norm:
                     src_norm2 = self.norm2(src_chunk)
                 else:
@@ -114,6 +121,7 @@ def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, c
                     
                 mlp_out = self.linear2(self.dropout(self.activation(self.linear1(src_norm2))))
                 
+                # Residual 2 + Norm 2
                 src_chunk = src_chunk + self.dropout2(mlp_out)
                 if not self.pre_norm:
                     src_chunk = self.norm2(src_chunk)
