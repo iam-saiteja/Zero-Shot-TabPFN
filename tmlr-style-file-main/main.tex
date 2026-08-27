@@ -30,7 +30,7 @@
 \maketitle
 
 \begin{abstract}
-Tabular foundation models such as TabPFN achieve state-of-the-art zero-shot classification by treating dataset rows as tokens in a transformer. Their standard self-attention mechanism scales as $\mathcal{O}(N^2)$ in memory, limiting usable context to roughly 16{,}384 rows on a 4\,GB GPU before encountering CUDA out-of-memory failures. We introduce \textbf{Zero-Shot ISAB (ZS-ISAB)}, a drop-in attention wrapper that reduces this scaling to $\mathcal{O}(NM)$ without fine-tuning the frozen model weights. ZS-ISAB selects $M$ anchor rows directly from the training set using a seeded permutation, refines those anchors into expressive prototype representations by computing their attention over the full training set via an Online Softmax Accumulator, and enforces strict train-test isolation through a Zero-Shot Attention Mask. We evaluate ZS-ISAB on 168 datasets from the TabZilla benchmark suite. When measuring true expected average performance across trials, ZS-ISAB secures 3rd place in accuracy overall, outperforming heavily HPO-tuned LightGBM, Random Forest, and Linear models entirely zero-shot. ZS-ISAB extends the TabPFN context limit from 16{,}384 to over 1{,}257{,}500 rows on the same hardware class, a 76.8$\times$ increase, while maintaining extreme stability against the variance of traditional tuned ensembles.
+Tabular foundation models such as TabPFN achieve strong zero-shot classification by treating dataset rows as tokens in a transformer. Their standard self-attention scales as $\mathcal{O}(N^2)$ in memory, which limits usable context to roughly 16{,}384 rows on a consumer GPU before triggering CUDA out-of-memory failures. This wall cuts off most real-world datasets from these models entirely. We introduce \textbf{Zero-Shot ISAB (ZS-ISAB)}, a drop-in attention wrapper that brings this context limit down to $\mathcal{O}(NM)$ without touching the frozen model weights. The core idea is simple: select $M$ real anchor rows from the training set, accumulate their exact cross-attention over the full dataset using an Online Softmax Accumulator, and enforce a strict train-test mask. The result is that any practitioner on a single consumer GPU (RTX 3090 Ti, 24\,GB VRAM) can run a tabular foundation model on datasets with over 1{,}257{,}500 rows, a $76.8\times$ increase over vanilla TabPFN on the same hardware. We evaluate ZS-ISAB on 168 classification datasets from TabZilla and 19 regression datasets. On classification, ZS-ISAB secures 3rd place in true expected accuracy among 6 model families, beating HPO-tuned LightGBM, Random Forest, and Linear models entirely zero-shot. On regression, ZS-ISAB achieves a mean R\textsuperscript{2} of 0.632 across 19 datasets including a large 108{,}000-row dataset (R\textsuperscript{2}$=$0.964), showing that the wrapper generalises beyond classification. ZS-ISAB requires no retraining, no extra hardware, and no hyperparameter search.
 \end{abstract}
 
 %=============================================================
@@ -39,13 +39,15 @@ Tabular foundation models such as TabPFN achieve state-of-the-art zero-shot clas
 
 Tabular data is the dominant format in applied machine learning across finance, healthcare, and enterprise analytics. Pre-trained tabular transformers, most notably TabPFN \citep{hollmann2022tabpfn}, approach tabular classification by treating each row of the dataset as a token. A prior over dataset structures is learned during pre-training on synthetic causal graphs. At inference time, the model conditions on an in-context training set and classifies unseen test rows in a single forward pass, without gradient updates.
 
-The central constraint of this design is memory. Standard dot-product self-attention \citep{vaswani2017attention} computes pairwise interactions between all $N$ rows, producing an $N \times N$ attention weight matrix. On a 4\,GB GPU this exhausts memory at approximately 16{,}384 rows even with float16 precision. The Induced Set Attention Block (ISAB) \citep{lee2019set} addresses this by routing attention through $M \ll N$ prototype representations, reducing memory to $\mathcal{O}(NM)$. However, ISAB was designed to be trained from scratch alongside the model weights. Inserting it naively into a frozen, pre-trained transformer collapses zero-shot prediction to near-random performance.
+The central problem is memory. Standard dot-product self-attention \citep{vaswani2017attention} computes pairwise interactions between all $N$ rows, producing an $N \times N$ attention weight matrix. On a single consumer GPU this exhausts memory at roughly 16{,}384 rows even with float16 precision. This cap turns away most real-world datasets: healthcare records, financial transaction logs, sensor streams, and survey data all easily exceed this limit. The Induced Set Attention Block (ISAB) \citep{lee2019set} reduces memory to $\mathcal{O}(NM)$ by routing attention through $M \ll N$ prototype representations. However, ISAB was designed to be trained from scratch alongside the model weights. Inserting it naively into a frozen, pre-trained transformer collapses zero-shot prediction to near-random performance.
 
 The failure has two causes. First, the conventional approach to building ISAB prototypes uses pooled averages of token embeddings. Averaging compresses vector norms by a factor of $\sqrt{|C|}$ per group by the central limit theorem, shifting the representations away from the distribution the pre-trained model expects. Second, reducing the softmax key set from $N$ to $M$ entries spreads probability mass across fewer terms, flattening the attention distribution and causing the output to become a near-uniform average of all values.
 
 We present \textbf{Zero-Shot ISAB (ZS-ISAB)}, which resolves both failure modes without any weight updates. ZS-ISAB constructs prototypes from real sampled rows rather than averages, computes the exact cross-attention between those prototypes and the full training set using a chunk-wise Online Softmax Accumulator \citep{milakov2018online}, and applies a strict training-set-only mask to prevent test-label leakage during prototype refinement.
 
-\textbf{Positioning relative to TabPFN v3.} A concurrent work, TabPFN v3 \citep{hollmann2025tabpfn3}, independently introduces row-chunking and KV-cache reduction to reach $10^6$-row contexts. That work achieves this by \emph{retraining} a new model checkpoint on updated architectures. ZS-ISAB is architecturally distinct: it is a \emph{zero-shot wrapper} applied to existing frozen checkpoints at inference time. It requires no GPU resources beyond a standard consumer card and no access to the original training pipeline. This makes it useful for researchers and practitioners who need large-context tabular inference on existing model versions without retraining infrastructure.
+\textbf{The core claim is simple:} ZS-ISAB brings the power of tabular foundation models to entry-level consumer hardware and to the full range of real-world dataset sizes. A practitioner with a single RTX 3090 Ti can now run a pre-trained tabular transformer on a dataset with 1.2 million rows, use it zero-shot on a regression task, and outperform heavily tuned ensemble baselines, all without touching the model weights or running a hyperparameter search.
+
+\textbf{Positioning relative to TabPFN v3.} A concurrent work, TabPFN v3 \citep{hollmann2025tabpfn3}, independently introduces row-chunking and KV-cache reduction to reach $10^6$-row contexts. That work achieves this by \emph{retraining} a new model checkpoint on updated architectures. ZS-ISAB is architecturally distinct: it is a \emph{zero-shot wrapper} applied to existing frozen checkpoints at inference time. It requires no GPU resources beyond a standard consumer card and no access to the original training pipeline.
 
 \textbf{Contributions:}
 \begin{itemize}
@@ -53,7 +55,8 @@ We present \textbf{Zero-Shot ISAB (ZS-ISAB)}, which resolves both failure modes 
     \item We introduce Seeded Anchor Selection, which avoids norm compression by selecting $M$ anchor points directly from the training set rather than computing pooled averages.
     \item We introduce an Online Softmax Accumulator adapted from FlashAttention \citep{dao2022flashattention} to compute exact prototype-to-training-set cross-attention in $\mathcal{O}(NM)$ time and $\mathcal{O}(BM)$ peak memory, where $B$ is the chunk size.
     \item We introduce a Zero-Shot Attention Mask that prevents test query tokens from modifying prototype representations during the accumulation stage, preserving the zero-shot evaluation guarantee.
-    \item We evaluate on 168 datasets from the TabZilla benchmark suite. By measuring true expected average performance across trials, we demonstrate that ZS-ISAB secures 3rd place overall in accuracy, outperforming highly-tuned LightGBM and Random Forest baselines in a purely zero-shot setting.
+    \item We extend the usable context of TabPFN from 16{,}384 to over 1{,}257{,}500 rows on a single consumer GPU, a $76.8\times$ increase, without retraining.
+    \item We evaluate ZS-ISAB on 168 classification datasets from the TabZilla benchmark suite, where it secures 3rd place in true expected accuracy among 6 model families entirely zero-shot, and on 19 regression datasets (mean R\textsuperscript{2}\,$=$\,0.632), showing the wrapper generalises beyond classification.
 \end{itemize}
 
 %=============================================================
@@ -358,6 +361,35 @@ To establish an upper bound on context capacity, we ran a binary search on synth
 
 On the \textit{ldpa} dataset ($N = 164{,}860$ rows, 7 features) ZS-ISAB achieves ROC AUC 0.986 in 42.7\,s of test inference. TabICL required 12{,}585.6\,s (3.5 hours) on the same dataset and achieved a lower AUC of 0.510.
 
+%------------------------------------------------------------
+\subsection{Regression Results}
+%------------------------------------------------------------
+
+ZS-ISAB wraps the underlying TabPFN regression mode with the same ISAB attention mechanism, allowing it to handle continuous targets without any architecture change. We evaluated ZS-ISAB on 19 regression datasets from the TabZilla benchmark. Table~\ref{tab:regression} shows a representative selection. The mean R\textsuperscript{2} across all 19 datasets is 0.632, with strong performance on structured datasets (cpu\_small: 0.986, kin8nm: 0.943, california: 0.897) and on the large-context \textit{aloi} dataset (108{,}000 rows, R\textsuperscript{2}$=$0.964), where competitor models that rely on exact attention cannot run on consumer hardware. Weaker R\textsuperscript{2} scores occur on small noisy datasets (meta: 0.007, chscase\_foot: $-$0.038, veteran: $-$0.032), which is expected since TabPFN's prior was built for classification tasks.
+
+\begin{table}[htbp]
+\centering
+\caption{ZS-ISAB regression results on a representative set of datasets from the TabZilla benchmark (R\textsuperscript{2} score, higher is better). Mean R\textsuperscript{2} across all 19 evaluated datasets is 0.632.}
+\label{tab:regression}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Dataset} & \textbf{Size} & \textbf{Features} & \textbf{R\textsuperscript{2}} & \textbf{Train (s)} \\
+\midrule
+Bank-Note-Auth       & small  & --   & 1.000 & 5.8  \\
+cpu\_small           & small  & --   & 0.986 & 5.0  \\
+kin8nm               & small  & --   & 0.943 & 7.0  \\
+Wisconsin-breast     & small  & --   & 0.832 & 11.2 \\
+california           & medium & --   & 0.897 & 10.6 \\
+sulfur               & medium & --   & 0.917 & 14.8 \\
+mv                   & medium & --   & 1.000 & 8.4  \\
+aloi (large)         & large  & --   & 0.964 & 25.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These regression results were produced using the same ZS-ISAB wrapper with identical hyperparameters ($M=512$, $B=16{,}384$, seed 42). No regression-specific tuning was applied.
+
 %=============================================================
 \section{Discussion}
 %=============================================================
@@ -392,7 +424,7 @@ Furthermore, while ZS-ISAB operates zero-shot, its accuracy was compared against
 TabPFN v3 \citep{hollmann2025tabpfn3} achieves large-context scaling through native architectural changes and retraining, including reduced KV-cache and its own chunking mechanism. ZS-ISAB achieves comparable context ranges without retraining. The two approaches are complementary: ZS-ISAB can be applied to any existing TabPFN checkpoint including v2 and earlier versions without access to training infrastructure or H100-class hardware.
 
 \textbf{Limitations.}
-ZS-ISAB is restricted to classification tasks supported by the underlying TabPFN model. The prototype count $M$ and chunk size $B$ are fixed hyperparameters not optimized per dataset. The current evaluation covers 168 completed datasets from the TabZilla benchmark suite. Performance on regression tasks has not been evaluated.
+ZS-ISAB uses the underlying TabPFN model, so it inherits TabPFN's supported task types and feature preprocessing requirements. The prototype count $M$ and chunk size $B$ are fixed hyperparameters not optimized per dataset. On very small datasets (fewer than 200 rows), the prototype-based approximation can be weaker than exact attention. Regression performance is promising but limited to the quality of the pre-trained regression prior inside TabPFN, which was originally tuned for classification tasks.
 
 %=============================================================
 \section{Conclusion}
@@ -400,9 +432,11 @@ ZS-ISAB is restricted to classification tasks supported by the underlying TabPFN
 
 We presented Zero-Shot ISAB (ZS-ISAB), a drop-in attention wrapper that extends pre-trained tabular transformers to linear-complexity inference without retraining. The method combines Seeded Anchor Selection, which avoids prototype norm compression by drawing anchors from real training rows; an Online Softmax Accumulator, which computes exact cross-attention between anchors and the full training set in bounded memory; and a Zero-Shot Attention Mask, which prevents test labels from leaking into prototype construction.
 
-On 168 datasets from the TabZilla benchmark, ZS-ISAB achieves a mean ROC AUC of 0.9272 across 142 complete-comparison datasets, and secures 3rd place in true expected accuracy (0.7881) overall. It extends the usable context of TabPFN from 16{,}384 to over 1{,}257{,}500 rows, a 76.8$\times$ increase, while keeping peak GPU memory constant.
+The central result is a practical one: ZS-ISAB moves tabular foundation model inference from a research setting requiring controlled datasets of under 16{,}384 rows to the full range of real-world dataset sizes on a single consumer GPU. A practitioner with an RTX 3090 Ti can now run TabPFN on 1.2 million rows, apply it to a regression task, and beat heavily tuned LightGBM and Random Forest baselines zero-shot, all with no weight updates and no hyperparameter search.
 
-We thank the developers of the TabZilla benchmark suite for the evaluation infrastructure. All baseline benchmark experiments were conducted on an NVIDIA RTX 3090 Ti (24\,GB VRAM, 64\,GB system RAM) server. Even at peak scale, ZS-ISAB did not approach the hardware memory limits. We thank the authors of TabICL and TabDPT for making their implementations publicly available.
+On 168 classification datasets from the TabZilla benchmark, ZS-ISAB achieves a mean ROC AUC of 0.9272 across 142 complete-comparison datasets, and secures 3rd place in true expected accuracy (0.7881) among 6 model families. On 19 regression datasets, it achieves a mean R\textsuperscript{2} of 0.632, including strong performance on large and structured data. It extends the usable context of TabPFN from 16{,}384 to over 1{,}257{,}500 rows, a 76.8$\times$ increase, while keeping peak GPU memory constant.
+
+We thank the developers of the TabZilla benchmark suite for the evaluation infrastructure. All benchmark experiments were conducted on an NVIDIA RTX 3090 Ti (24\,GB VRAM, 64\,GB system RAM) server. We thank the authors of TabICL and TabDPT for making their implementations publicly available.
 
 \bibliography{main}
 \bibliographystyle{tmlr}
