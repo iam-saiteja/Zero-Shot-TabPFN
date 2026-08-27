@@ -11,12 +11,11 @@ try:
     from autogluon.core.models import AbstractModel
     from autogluon.features import LabelEncoderFeatureGenerator
 except ImportError:
-    # Minimal base class contract when running outside full AutoGluon installation
     class AbstractModel:
         ag_key = "ZSISAB"
         ag_name = "ZS-ISAB"
         ag_priority = 105
-        
+
         def __init__(self, problem_type="binary", **kwargs):
             self.problem_type = problem_type
             self.params = kwargs
@@ -25,7 +24,7 @@ except ImportError:
         def _get_model_params(self):
             return self.params
 
-        def _preprocess(self, X: pd.DataFrame, **kwargs):
+        def _preprocess(self, X, **kwargs):
             return X.copy()
 
     class LabelEncoderFeatureGenerator:
@@ -70,12 +69,15 @@ class ZSISABModel(AbstractModel):
     def _get_default_ag_args_ensemble(cls) -> dict:
         return {"fold_fitting_strategy": "sequential_local"}
 
-    def _preprocess(self, X: pd.DataFrame, is_train: bool = False, **kwargs) -> np.ndarray:
+    def _preprocess(self, X, is_train: bool = False, **kwargs) -> np.ndarray:
+        if isinstance(X, np.ndarray):
+            return X.astype(np.float32)
+
         X = super()._preprocess(X, **kwargs)
         if is_train:
             self._feature_generator = LabelEncoderFeatureGenerator(verbosity=0)
             self._feature_generator.fit(X=X)
-        
+
         if self._feature_generator is not None and getattr(self._feature_generator, "features_in", None):
             X = X.copy()
             encoded = self._feature_generator.transform(X=X)
@@ -85,13 +87,13 @@ class ZSISABModel(AbstractModel):
                         X[col] = encoded[col]
             else:
                 X[self._feature_generator.features_in] = encoded
-                
+
         return X.fillna(0).to_numpy(dtype=np.float32)
 
     def _fit(
         self,
-        X: pd.DataFrame,
-        y: pd.Series,
+        X,
+        y,
         num_cpus: int = 1,
         num_gpus: float = 0,
         time_limit: float | None = None,
@@ -100,7 +102,7 @@ class ZSISABModel(AbstractModel):
         import typing
         import torch.nn.modules.transformer
         torch.nn.modules.transformer.Optional = typing.Optional
-        
+
         from tabpfn import TabPFNClassifier
         from zsisab.wrapper import inject_zsisab
 
@@ -114,16 +116,17 @@ class ZSISABModel(AbstractModel):
         inject_zsisab(num_prototypes=num_prototypes, chunk_size=chunk_size)
 
         self.model = TabPFNClassifier(device=device, N_ensemble_configurations=n_ensemble)
-        
-        X_processed = self._preprocess(X, is_train=True)
-        self.model.fit(X_processed, y.to_numpy(), overwrite_warning=True)
 
-    def _predict_proba(self, X: pd.DataFrame, **kwargs) -> np.ndarray:
-        X_processed = self._preprocess(X, is_train=False)
+        X_processed = self._preprocess(X, is_train=True) if isinstance(X, pd.DataFrame) else X
+        y_processed = y.to_numpy() if isinstance(y, pd.Series) else y
+        self.model.fit(X_processed, y_processed, overwrite_warning=True)
+
+    def _predict_proba(self, X, **kwargs) -> np.ndarray:
+        X_processed = self._preprocess(X, is_train=False) if isinstance(X, pd.DataFrame) else X
         return self.model.predict_proba(X_processed)
 
-    def _predict(self, X: pd.DataFrame, **kwargs) -> np.ndarray:
-        X_processed = self._preprocess(X, is_train=False)
+    def _predict(self, X, **kwargs) -> np.ndarray:
+        X_processed = self._preprocess(X, is_train=False) if isinstance(X, pd.DataFrame) else X
         return self.model.predict(X_processed)
 
     def _estimate_memory_usage(self, X: pd.DataFrame, **kwargs) -> int:
