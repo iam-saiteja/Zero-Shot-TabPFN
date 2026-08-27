@@ -2,9 +2,13 @@
 __pycache__/
 catboost_info/
 msa_checkpoints/
-*.csv
 scratch/
 me.md
 paper_template/
 uv
 paper.zip
+tmlr-style-file-main/
+tabzilla/
+Zero_Shot_ISAB__Refined_Inducing_Point_Attention_for_Tabular_Transformers/
+Zero_Shot_ISAB__Refined_Inducing_Point_Attention_for_Tabular_Transformers.zip
+Literature_Synthesis_Matrix_BVRIT.xlsx

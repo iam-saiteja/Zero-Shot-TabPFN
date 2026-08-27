@@ -1,61 +1,60 @@
 # ZS-ISAB: Zero-Shot ISAB Architecture
 
-This repository contains the official implementation of **ZS-ISAB** for TabPFN, a mathematical breakthrough that allows TabPFN to evaluate massive tabular datasets on consumer hardware by completely eliminating the $O(N^2)$ VRAM bottleneck.
+**Author:** Thanniru Sai Teja ([@iam-saiteja](https://github.com/iam-saiteja))  
+**Repository:** [https://github.com/iam-saiteja/Zero-Shot-TabPFN](https://github.com/iam-saiteja/Zero-Shot-TabPFN)
 
-## The Architecture: How It Works
+This repository contains the official implementation of **ZS-ISAB** (Zero-Shot Induced Set Attention Block) for TabPFN, a mathematical wrapper that allows pre-trained tabular foundation models to evaluate massive tabular datasets on entry-level consumer hardware by eliminating the $\mathcal{O}(N^2)$ VRAM bottleneck without fine-tuning or retraining.
 
-Vanilla TabPFN relies on standard self-attention mechanisms with an $O(N^2)$ memory footprint, forcing it to project all $N$ dataset rows simultaneously into the GPU VRAM. This scaling law dictates that TabPFN instantly crashes with `CUDA Out Of Memory` errors on just 16,384 rows, even on a top-tier 24GB VRAM GPU.
+---
 
-Our **ZS-ISAB** (Zero-Shot Induced Set Attention Block) architecture solves this natively inside the computational graph by mathematically decoupling computation from data storage.
+## 🏛️ Architecture Overview
 
-### 1. The Tag-Team Memory Hierarchy
-Instead of pushing the entire dataset to the GPU, ZS-ISAB retains the massive dataset safely in your CPU's **System RAM**. The architecture dynamically pipes a small "chunk" (e.g., 16,384 rows) into the **GPU VRAM**, calculates the necessary matrix multiplications, and pulls the accumulated projections back to System RAM. 
+Vanilla TabPFN relies on standard self-attention mechanisms with an $\mathcal{O}(N^2)$ memory footprint, forcing it to project all $N$ dataset rows simultaneously into the GPU VRAM. This causes vanilla TabPFN to crash with `CUDA Out Of Memory` errors on just 16,384 rows on consumer GPUs.
 
-This means your GPU only ever processes a single manageable chunk at a time. The result? **Your GPU VRAM usage stays completely flat**, and the only physical limit left for TabPFN scaling is your total System RAM.
+Our **ZS-ISAB** architecture solves this natively inside the computational graph:
 
-### 2. O(NM) Computational Scaling via Prototypes
-ZS-ISAB compresses information from all $N$ training rows into $M$ learned prototypes (where $M \ll N$). By leveraging an online-softmax (similar to FlashAttention), the attention mechanism scales at $O(NM)$ rather than $O(N^2)$.
-- **Vanilla:** Computes attention weights for all $N \times N$ pairs $\rightarrow O(N^2)$ time and space.
-- **ZS-ISAB:** Computes attention iteratively over chunks to update $M$ prototypes $\rightarrow O(NM)$ time and $O(M^2 + M \cdot \text{chunk})$ space.
+![ZS-ISAB Architecture](assets/zsisab_overall_bw_1782647102559.png)
 
-## Performance & Scaling Metrics
+### 1. Tag-Team Memory Hierarchy & Streaming Data Chunking
+Instead of pushing the entire dataset to the GPU, ZS-ISAB retains the dataset safely in **System RAM**. The architecture dynamically pipes small blocks ($B = 16{,}384$ rows) into the **GPU VRAM**, accumulates the necessary attention projections using an Online Softmax Accumulator (adapted from FlashAttention), and clears intermediate allocations. Peak GPU VRAM usage stays strictly flat.
 
-By shattering the memory bottleneck, ZS-ISAB enables unprecedented scaling for TabPFN while actually *reducing* overall runtime on large datasets due to optimized cache coherence and reduced VRAM allocations.
+![Chunking & Accumulation](assets/zsisab_chunking_bw_1782647114312.png)
 
-### 1. The Extreme Row Limit Test
-To find the absolute mathematical limit, we conducted a binary search stress test on an Ubuntu Server equipped with an RTX 3090 Ti (24GB VRAM) and a Core i7-12700K (64GB RAM).
+### 2. $\mathcal{O}(NM)$ Computational Scaling via Seeded Anchors
+ZS-ISAB routes attention through $M = 512$ actual anchor rows sampled from the training set via a seeded permutation (`seed=42`). This completely avoids the representation collapse caused by averaged token embeddings.
 
-- **Vanilla TabPFN Official Limit**: ~16,384 rows
-- **ZS-ISAB True Mathematical Limit**: **1,257,500 rows** (processed in just 8.9 seconds)
-- **Scaling Multiplier**: **76.8x larger** than Vanilla TabPFN!
+---
 
-Even at 1.25M rows, ZS-ISAB did not hit the 24GB VRAM limit. The actual bottleneck was the system RAM holding the CSV file in pandas.
+## 📊 Benchmark Results & Leaderboards
 
-### 2. The Accuracy Breakthrough: Zero-Shot vs HPO Variance
-When evaluating across **168 TabZilla datasets** using *true expected average performance* across all trials (rather than cherry-picking maximums), ZS-ISAB mathematically secures **3rd Place in Accuracy** overall.
+### 1. Extreme Row Limit Test (RTX 3090 Ti Server)
+- **Vanilla TabPFN Limit:** $\sim$16,384 rows
+- **ZS-ISAB Limit:** **1,257,500 rows** (evaluated in 8.9 seconds)
+- **Scaling Factor:** **76.8$\times$ larger context** on identical consumer hardware!
 
-By completely bypassing Hyperparameter Optimization (HPO), ZS-ISAB maintains rock-solid stability. The heavily-tuned baseline models (LightGBM, RandomForest) suffer from high variance across their HPO sweeps, causing their true averages to drop below ZS-ISAB's zero-shot baseline.
+### 2. TabZilla 168-Dataset Suite (True Expected Performance)
+Evaluating across **168 TabZilla datasets** using true expected mean performance across random search trials:
 
-**True Accuracy Leaderboard (Averaged, 168 Datasets)**
-1. XGBoost: 0.8370
-2. CatBoost: 0.8197
-3. **ZS-ISAB: 0.7881 (Zero-Shot)**
-4. LightGBM: 0.7839
-5. RandomForest: 0.7799
-6. LinearModel: 0.7671
+| Rank | Model | Mean Accuracy | Zero-Shot / Tuned |
+|:---:|:---|:---:|:---:|
+| 1 | XGBoost | 0.8370 | Tuned (HPO) |
+| 2 | CatBoost | 0.8197 | Tuned (HPO) |
+| 🥇 **3** | **TabPFN ZS-ISAB (Ours)** | **0.7881** | **Pure Zero-Shot** |
+| 4 | LightGBM | 0.7839 | Tuned (HPO) |
+| 5 | RandomForest | 0.7799 | Tuned (HPO) |
+| 6 | LinearModel | 0.7671 | Tuned (HPO) |
 
-This proves that ZS-ISAB doesn't just solve memory scaling—it acts as a foundational model capable of beating standard tuned ensembles out-of-the-box.
+![Accuracy Comparison](assets/bar_accuracy.png)
+![Train vs Test Time Tradeoff](assets/scatter_time.png)
 
-![Train vs Test Time](paper/assets/scatter_time.png)
-![Accuracy Comparison](paper/assets/bar_accuracy.png)
+### 3. Tabular Foundation Model (TFM) Arena (142 Datasets Head-to-Head)
+- **Mean ROC AUC:** **0.9272** (1st place among TFMs, vs TabDPT 0.9182, TabICL 0.9146)
+- **Win Rate:** **69.0%** best-or-tied across all 3-way comparisons.
+- **CUDA OOMs:** **0 crashes** across all datasets.
 
-### 3. Optimal Hyperparameters
-Based on extensive sweeps across 168 TabZilla datasets, the optimal predictive setup is:
-- `num_prototypes = 512`
-- `chunk_size = 16384`
-- `N_ensemble_configurations = 32`
+---
 
-## Usage
+## ⚡ Quickstart
 
 ```python
 from tabpfn import TabPFNClassifier
@@ -64,8 +63,15 @@ from zsisab.wrapper import inject_zsisab
 # 1. Inject the ZS-ISAB architecture globally
 inject_zsisab(num_prototypes=512, chunk_size=16384)
 
-# 2. Use TabPFN exactly as normal!
+# 2. Use TabPFN exactly as normal with 1M+ row scalability!
 clf = TabPFNClassifier(device='cuda', N_ensemble_configurations=32)
 clf.fit(X_train, y_train)
 probs = clf.predict_proba(X_test)
 ```
+
+---
+
+## 📦 Raw Benchmark Datasets & Artifacts
+
+- **Suite 1 (TabZilla 168 Datasets, 46,409 JSONs):** `tabzilla_168_datasets_raw_results.zip`
+- **Suite 2 (TFM Arena & Scaling Logs):** `tfm_arena_and_extreme_scaling_results.zip`

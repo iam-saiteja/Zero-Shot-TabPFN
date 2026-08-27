@@ -3,17 +3,48 @@ Zero-Shot ISAB (ZS-ISAB) model wrapper for AutoGluon / TabArena.
 """
 from __future__ import annotations
 
-import typing
-import torch.nn.modules.transformer
-torch.nn.modules.transformer.Optional = typing.Optional
-
 import numpy as np
 import pandas as pd
-from tabpfn import TabPFNClassifier
 
-from autogluon.core.models import AbstractModel
-from autogluon.features import LabelEncoderFeatureGenerator
-from zsisab.wrapper import inject_zsisab
+# Safe AutoGluon import with graceful fallback
+try:
+    from autogluon.core.models import AbstractModel
+    from autogluon.features import LabelEncoderFeatureGenerator
+except ImportError:
+    # Minimal base class contract when running outside full AutoGluon installation
+    class AbstractModel:
+        ag_key = "ZSISAB"
+        ag_name = "ZS-ISAB"
+        ag_priority = 105
+        
+        def __init__(self, problem_type="binary", **kwargs):
+            self.problem_type = problem_type
+            self.params = kwargs
+            self._classes = np.array([0, 1])
+
+        def _get_model_params(self):
+            return self.params
+
+        def _preprocess(self, X: pd.DataFrame, **kwargs):
+            return X.copy()
+
+    class LabelEncoderFeatureGenerator:
+        def __init__(self, verbosity=0):
+            self.features_in = []
+            self.mapping = {}
+
+        def fit(self, X: pd.DataFrame):
+            self.features_in = list(X.select_dtypes(include=["object", "category"]).columns)
+            for col in self.features_in:
+                cats = X[col].astype(str).unique()
+                self.mapping[col] = {cat: float(i) for i, cat in enumerate(cats)}
+            return self
+
+        def transform(self, X: pd.DataFrame):
+            X_out = pd.DataFrame(index=X.index)
+            for col in self.features_in:
+                X_out[col] = X[col].astype(str).map(self.mapping.get(col, {})).fillna(-1.0)
+            return X_out
 
 
 class ZSISABModel(AbstractModel):
@@ -22,7 +53,8 @@ class ZSISABModel(AbstractModel):
 
     Paper: "Zero-Shot ISAB: Linear-Complexity Inducing Point Attention
             for Frozen Tabular Transformers"
-    Code:  https://github.com/iam-saiteja/Zero-Shot-TabPFN
+    Author: Thanniru Sai Teja (https://github.com/iam-saiteja)
+    Code:   https://github.com/iam-saiteja/Zero-Shot-TabPFN
     """
 
     ag_key = "ZSISAB"
@@ -43,9 +75,17 @@ class ZSISABModel(AbstractModel):
         if is_train:
             self._feature_generator = LabelEncoderFeatureGenerator(verbosity=0)
             self._feature_generator.fit(X=X)
-        if self._feature_generator is not None and self._feature_generator.features_in:
+        
+        if self._feature_generator is not None and getattr(self._feature_generator, "features_in", None):
             X = X.copy()
-            X[self._feature_generator.features_in] = self._feature_generator.transform(X=X)
+            encoded = self._feature_generator.transform(X=X)
+            if isinstance(encoded, pd.DataFrame):
+                for col in self._feature_generator.features_in:
+                    if col in encoded.columns:
+                        X[col] = encoded[col]
+            else:
+                X[self._feature_generator.features_in] = encoded
+                
         return X.fillna(0).to_numpy(dtype=np.float32)
 
     def _fit(
@@ -57,6 +97,13 @@ class ZSISABModel(AbstractModel):
         time_limit: float | None = None,
         **kwargs,
     ) -> None:
+        import typing
+        import torch.nn.modules.transformer
+        torch.nn.modules.transformer.Optional = typing.Optional
+        
+        from tabpfn import TabPFNClassifier
+        from zsisab.wrapper import inject_zsisab
+
         params = self._get_model_params()
         num_prototypes = params.get("num_prototypes", 512)
         chunk_size = params.get("chunk_size", 16384)
