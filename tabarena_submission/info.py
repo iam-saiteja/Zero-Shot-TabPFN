@@ -9,7 +9,7 @@ INFO = {
     "paper": "Zero-Shot ISAB: Linear-Complexity Inducing Point Attention for Frozen Tabular Transformers",
     "paper_url": "https://github.com/iam-saiteja/Zero-Shot-TabPFN",
     "code_url": "https://github.com/iam-saiteja/Zero-Shot-TabPFN",
-    "authors": ["Anonymous Authors (TMLR Submission)"],
+    "authors": ["Thanniru Sai Teja"],
     "supported_problem_types": ["binary", "multiclass", "regression"],
     "is_foundation_model": True,
     "is_zero_shot": True,
