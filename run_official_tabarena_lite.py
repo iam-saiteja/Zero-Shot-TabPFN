@@ -54,6 +54,7 @@ def main():
 
     experiments = TabArenaV0pt1ExperimentBundle(
         models=[(model_info.search_space, 0)],
+        adapt_num_folds_to_n_classes=True,
     ).build_experiments()
 
     context = TabArenaContext()
