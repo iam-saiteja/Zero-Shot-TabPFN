@@ -35,10 +35,17 @@ def main():
         choices=["tiny", "small", "all", "classification", "regression"],
         help="Dataset size/type subset (tiny=18 datasets <=2k rows, small=36 datasets <=10k rows, all=all 51 datasets)",
     )
+    parser.add_argument(
+        "--time_limit",
+        type=int,
+        default=14400,
+        help="Time limit per task in seconds (default: 14400s = 4h)",
+    )
     args = parser.parse_args()
 
     print("=" * 70)
     print(f"RUNNING OFFICIAL TABARENA-LITE BENCHMARK: {args.model.upper()} (Subset: {args.subset})")
+    print(f"Time Limit per Task: {args.time_limit}s")
     print("=" * 70)
 
     output_dir = Path(__file__).parent / f"tabarena_lite_{args.model}_results"
@@ -55,6 +62,7 @@ def main():
     experiments = TabArenaV0pt1ExperimentBundle(
         models=[(model_info.search_space, 0)],
         adapt_num_folds_to_n_classes=True,
+        time_limit=args.time_limit,
     ).build_experiments()
 
     context = TabArenaContext()
