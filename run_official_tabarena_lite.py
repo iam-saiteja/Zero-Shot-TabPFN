@@ -89,12 +89,18 @@ def main():
     print(f"OFFICIAL TABARENA-LITE LEADERBOARD OUTPUT ({args.model.upper()}):")
     print("=" * 70)
     try:
-        print(website_lb.to_markdown(index=False))
+        sys.stdout.reconfigure(encoding="utf-8")
     except Exception:
-        print(website_lb[["method", "elo", "rank", "winrate", "normalized-error"]].to_string(index=False))
+        pass
 
-    with open(output_dir / "tabarena_lite_leaderboard.md", "w", encoding="utf-8") as f:
-        f.write(website_lb.to_markdown(index=False))
+    cols = [c for c in ["method", "elo", "rank", "winrate", "normalized_error", "normalized-error", "time_train_s", "time_infer_s"] if c in website_lb.columns]
+    print(website_lb[cols].head(30).to_string(index=False))
+
+    try:
+        with open(output_dir / "tabarena_lite_leaderboard.md", "w", encoding="utf-8") as f:
+            f.write(website_lb.to_markdown(index=False))
+    except Exception:
+        pass
     website_lb.to_csv(output_dir / "tabarena_lite_leaderboard.csv", index=False)
     print(f"\nSaved leaderboard outputs to {output_dir}")
 
