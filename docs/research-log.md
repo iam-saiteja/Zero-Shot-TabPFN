@@ -4,6 +4,33 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-26 — Found a much cheaper path: fine-tune an existing checkpoint, not train from scratch
+
+User asked about fine-tuning + quantizing an existing model instead of
+prior-fitting from scratch. Checked it properly — see
+`research/finetune-existing-models.md`. Three findings that change the plan:
+
+1. **[TabTune](https://github.com/Lexsi-Labs/TabTune)** (MIT, active) already
+   implements inference + full fine-tune + LoRA/PEFT + episodic ICL
+   fine-tuning across 16 tabular FMs including Mitra, TabPFN, TabICL. This
+   closes the "no training infra exists" gap from the previous entry — we
+   don't need to build a training loop to get started.
+2. Full fine-tuning beats LoRA on accuracy/convergence speed for TabPFNv2-scale
+   models per ["On Finetuning Tabular Foundation Models"](https://arxiv.org/html/2506.08982v2);
+   LoRA is a memory-fit tool for us (4GB), not an accuracy trick.
+3. For tabular FMs specifically, weight quantization (QLoRA-style) barely
+   helps since the models are already small — **FP8 attention
+   quantization** is the tabular-specific lever, with a measured 1.7x
+   speedup / no accuracy loss on TabPFN-v3 & TabICLv2 (["Attention Quantization
+   for Tabular FMs"](https://arxiv.org/abs/2609.13031)).
+
+**Decision: try this before committing to from-scratch pretraining or
+asking for the 3090 Ti.** Mitra is already the exact checkpoint for our
+already-chosen small-table niche — fine-tuning it (once, on a corpus
+disjoint from the eval set, to keep this a legitimate zero-shot entry, not a
+per-dataset "tuned" one) is a few hours of work using existing tooling, not
+days of custom training infra. Not yet run.
+
 ## 2026-09-26 — Checked RLCD; decided against RL for the training process
 
 User asked whether Jev's actual training method — RLCD (Reinforcement
