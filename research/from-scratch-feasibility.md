@@ -141,3 +141,30 @@ above into real numbers, each takes minutes to hours, not days:
 That calibration is the actual next action, not writing more theory. It's
 the only thing that turns the estimate above from arithmetic into a decision
 you can trust with a week of your machine's time.
+
+## Update: more compute is actually available — revised math
+
+Two more resources came up: possible access to a colleague's **24GB RTX
+3090 Ti**, and **Kaggle's free tier** (~30 GPU-hours/week, historically
+offered as 2×T4 — each T4 has 16GB VRAM, more than the 11GB 2080Ti the
+original TabPFN was trained on; verify current quota/accelerator options on
+Kaggle before relying on this, they change the offering over time).
+
+Revised estimates for the *scoped-down* recipe (smaller N cap, fewer
+layers, mixed priors — same scoping as above, roughly 4-8x cheaper than the
+unscoped original):
+
+| Resource | Rough wall-clock for the scoped recipe | Needs permission? |
+|---|---|---|
+| This laptop (RTX 3050, 4GB) | ~5-10 days continuous | No |
+| Kaggle free tier (~30 GPU-hrs/week, T4-class) | ~1-2 calendar weeks, spread across sessions with checkpointing (session length is capped, historically ~9-12h continuous — plan for resume-from-checkpoint, not one unbroken run) | **No** |
+| 24GB RTX 3090 Ti (colleague's) | ~1.5-3 days continuous (roughly 2.5-3x this laptop's throughput, and no VRAM-driven batch-size penalty) | Yes |
+
+**Sequencing recommendation, cheapest-first:** run the calibration (above)
+and initial scoped training on the laptop + free Kaggle quota — needs no
+one's permission, costs nothing, and is what actually tells you whether the
+recipe converges to something better than a trivial baseline at all. Only
+ask a colleague for the 3090 Ti once you have that real evidence in hand —
+asking for a favor backed by "here's a partial run that's already beating
+CatBoost on our target niche" is a very different conversation than asking
+on the strength of a theory doc.

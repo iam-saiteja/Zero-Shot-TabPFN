@@ -4,6 +4,31 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-26 — More compute available; checked "Jev/JEPA" lead; no training infra yet
+
+**Compute revised:** possible colleague access to a 24GB RTX 3090 Ti, plus
+Kaggle's free ~30 GPU-hrs/week (T4-class, 16GB), sit alongside the 4GB
+laptop. Updated `research/from-scratch-feasibility.md` with a resource
+table — recommendation is calibrate/iterate on the free options (laptop +
+Kaggle) first, ask for the 3090 Ti only once a scoped run shows real signal.
+
+**Checked the "Jev / TypeSafe AI" lead:** it's real, but it's a
+general-purpose schema-constrained decision model for agentic pipelines, not
+tabular-specific research to build on. While searching, found the actually
+relevant, days-old paper: "A JEPA Recipe for Tabular Foundation Models"
+([arXiv:2609.25541](https://arxiv.org/abs/2609.25541)) — tried
+representation-space prediction for tabular FMs, and it **underperformed
+plain value prediction while costing more compute**. Logged in
+`research/landscape.md` so we don't spend a week rediscovering that.
+
+**Open question, not yet answered:** do we have real training
+infrastructure for from-scratch prior-fitting? No — `zsisab/engine.py` is
+inference-time only (patches a frozen pretrained TabPFN), and
+`create_synthetic_dataset.py` is a single `sklearn.make_classification` call,
+nowhere near the diverse-SCM-prior generator the actual recipe needs. A real
+training loop, a proper synthetic-prior generator, and an eval harness for
+this are all unbuilt. That's the real next lift if we move past calibration.
+
 ## 2026-09-26 — Real web research on TabArena SOTA + from-scratch feasibility math
 
 **Context:** user clarified they understand large-scale synthetic

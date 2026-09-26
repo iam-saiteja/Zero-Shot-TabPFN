@@ -74,3 +74,35 @@ vs Chunked TabPFN's **"exact, but still O(N²) time."** That's a real,
 narrower, currently-uncontested claim — not "we fixed TabPFN," but "we're
 the throughput option once you're past the point where exact attention is
 still fast enough to matter."
+
+## A very recent negative result worth knowing before chasing it
+
+**"A JEPA Recipe for Tabular Foundation Models"** ([arXiv:2609.25541](https://arxiv.org/abs/2609.25541),
+posted days before this was written) tried applying LeCun's joint-embedding
+predictive architecture — predicting in representation space instead of raw
+cell values — to tabular foundation model pretraining. Getting it to not
+collapse required real engineering (value head reads the encoder field,
+EMA target). Even after fixing collapse, **it underperformed the plain
+value-prediction baseline** (32 wins / 70 losses on classification, 8/24 on
+regression, across 147 datasets) **and cost more compute to get there**
+(1.42x more training steps, 1.66x more wall-clock).
+
+Relevant because it was raised as "read about Jev from TypeSafe AI" for
+inspiration — worth being precise about what that actually is: **TypeSafe
+AI's "Jev"** is a real, shipped product, but it's a general-purpose
+schema-constrained decision model for agentic/LLM pipelines (declare a
+closed set of possible answers, the model is architecturally prevented from
+returning anything outside it), not a tabular foundation model, and not
+open research to build on directly. Conceptually it's TabPFN's own
+"single forward pass, closed prediction schema" paradigm applied to a
+different problem (structured decisions instead of table rows) — so if
+anything, our field already had the idea Jev is built on, not the reverse.
+
+The JEPA paper above is the actually-relevant, actually-recent tabular
+research in this space — and its answer is "we tried representation-space
+prediction for tabular FMs, it didn't help." Worth knowing before spending a
+week of compute chasing the same idea. Tabular cell values are already a
+low-dimensional, mixed discrete/continuous signal — much of JEPA's value in
+vision/robotics comes from avoiding the cost of predicting high-dimensional
+raw pixels, a problem tabular data doesn't have in the first place, which is
+a plausible reason the trick doesn't transfer.
