@@ -106,3 +106,39 @@ low-dimensional, mixed discrete/continuous signal — much of JEPA's value in
 vision/robotics comes from avoiding the cost of predicting high-dimensional
 raw pixels, a problem tabular data doesn't have in the first place, which is
 a plausible reason the trick doesn't transfer.
+
+## What Jev is actually trained with: RLCD — and why it doesn't apply here
+
+Jev's own training method is real and has a name: **RLCD (Reinforcement
+Learning for Calibrated Decisions)**, described (thinly — TypeSafe hasn't
+published the full recipe) in
+[arXiv:2609.29429](https://arxiv.org/abs/2609.29429). The one substantive
+line available: "RLCD trains a model to return calibrated decisions instead
+of generated text. Calibrated means that among decisions assigned
+probability p, a fraction close to p is correct."
+
+This is solving a different problem than ours: RLCD adapts an **already
+pretrained generative LLM's** decision behavior via RL — RL is the standard
+tool there because the LLM produces answers by sampling/generation, so
+there's no direct gradient from "was the probability right" back to the
+model without policy-gradient machinery (the same reason RLHF uses RL at
+all). We're not adapting a pretrained generator; we're training a
+transformer **from scratch** on synthetic (table, label) pairs where the
+correct label is known exactly. That objective is already directly
+differentiable — cross-entropy loss on the true label **is** a proper
+scoring rule, which is precisely what makes a model calibrated. There's no
+missing gradient RL needs to route around, so introducing an RL loop would
+add variance and complexity for a problem supervised learning already solves
+directly. This is exactly the same training process TabPFN, TabICL, TabDPT
+and Mitra all already use (in-context learning via supervised meta-training
+across synthetic tasks), and it's not incidental — it's the correct tool for
+"labels are known, loss is differentiable."
+
+Worth noting the field's own evidence points the other way, too: a related
+paper found in this same search, "Balancing Classification and Calibration
+Performance in Decision-Making LLMs via Calibration Aware Reinforcement
+Learning" ([alphaXiv 2601.13284](https://www.alphaxiv.org/abs/2601.13284)),
+reports that plain RL fine-tuning (RLVR) **leaves LLMs overconfident** —
+calibration has to be specially corrected for, it isn't a free side-effect
+of using RL. So "RL" and "calibrated" aren't the same claim; RLCD earns
+calibration through its specific reward design, not from RL itself.

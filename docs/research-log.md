@@ -4,6 +4,25 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-26 — Checked RLCD; decided against RL for the training process
+
+User asked whether Jev's actual training method — RLCD (Reinforcement
+Learning for Calibrated Decisions) — would be better than the supervised
+prior-fitting process proposed above. Checked [arXiv:2609.29429](https://arxiv.org/abs/2609.29429).
+
+**Decision: no, stick with supervised meta-training (cross-entropy on known
+synthetic labels), not RL.** RLCD's use of RL is a workaround for adapting
+an already-pretrained *generative* LLM, where there's no direct gradient
+from "was the probability right" back through sampled text — that's the
+same reason RLHF needs RL. Our situation is different: we're training a
+transformer from scratch on synthetic (table, label) pairs where the label
+is known exactly, so cross-entropy loss already gives a direct gradient and
+already is a proper scoring rule (i.e. already optimizes calibration
+directly). Adding an RL loop here would solve a problem we don't have.
+Corroborating evidence: a related paper found in the same search reports
+plain RL fine-tuning actually *leaves LLMs overconfident* unless calibration
+is specially corrected for — RL isn't inherently "the calibrated one."
+
 ## 2026-09-26 — More compute available; checked "Jev/JEPA" lead; no training infra yet
 
 **Compute revised:** possible colleague access to a 24GB RTX 3090 Ti, plus
