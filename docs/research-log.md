@@ -4,6 +4,36 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-26 — Real web research on TabArena SOTA + from-scratch feasibility math
+
+**Context:** user clarified they understand large-scale synthetic
+pretraining can't be matched, but want a math-grounded case for whether
+training a small zero-shot model *from scratch* is even feasible on their
+actual hardware (4GB RTX 3050 laptop) — and asked for real literature
+research, not more guessing. Wrote up in `research/landscape.md` (sourced
+survey of current TabArena SOTA — LimiX-2 #1 at 1935 Elo, not 2000+; the
+actual fit-time budget is 3600s not the 30s the fabricated doc claimed) and
+`research/from-scratch-feasibility.md` (the actual compute-budget math).
+
+**Important finding that changes our framing:** a Sept 2025 paper, "Chunked
+TabPFN" ([arXiv:2509.00326](https://arxiv.org/pdf/2509.00326)), already does
+*exact* (not approximate) chunked/tiled attention for TabPFN at scale,
+training-free, zero accuracy delta. This directly overlaps ZS-ISAB's "fix
+TabPFN's OOM problem" pitch — and beats it on accuracy, since it doesn't
+approximate. ZS-ISAB's remaining honest differentiator is throughput: O(N·M)
+compute vs Chunked TabPFN's O(N²), i.e. faster at extreme row counts at a
+controlled accuracy cost — not "we solved the memory problem" (already done,
+better, by someone else).
+
+**Feasibility conclusion:** reproducing the original 2022 TabPFN's exact
+prior-fitting recipe (160 GPU-hours on 2080Ti-class hardware) on this laptop
+serially is ~17 days, not "a few days." Scoping the model down (smaller N
+cap, fewer layers, specialize to a narrow regime the way Mitra already does
+for <5,000-row tables, mixed synthetic priors, bf16) plausibly brings that
+to ~5-10 days — an estimate, not a measurement. Recommended next action is a
+short calibration run (minutes-to-hours) to replace the estimate with a real
+number before committing a week of the machine's time. Not yet run.
+
 ## 2026-09-26 — Implemented Track A: coreset anchor refinement
 
 **Decision:** replaced ZS-ISAB's random inducing-point sampling with a
