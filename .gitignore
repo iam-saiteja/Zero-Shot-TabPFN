@@ -3,6 +3,9 @@ __pycache__/
 catboost_info/
 msa_checkpoints/
 scratch/
+AutogluonModels/
+datasets/
+data/
 me.md
 paper_template/
 uv

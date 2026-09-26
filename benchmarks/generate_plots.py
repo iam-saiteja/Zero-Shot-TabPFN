@@ -59,6 +59,54 @@ def generate_plots():
     plt.savefig(plots_dir / 'accuracy_efficiency.png', dpi=300)
     plt.close()
     
+    # 4. TFM Transformer Speed Comparison (Log Scale)
+    import json
+    tfm_path = base_dir / "benchmarks" / "tfm_leaderboard.json"
+    if tfm_path.exists():
+        with open(tfm_path, 'r') as f:
+            tfm_data = json.load(f)
+        
+        # We will dynamically find datasets that have ZS-ISAB evaluated
+        ds_names = []
+        zsisab_times = []
+        tabicl_times = []
+        tabdpt_times = []
+        
+        # Group by dataset
+        datasets_present = list(set([item["dataset"] for item in tfm_data]))
+        # Sort or limit to a few for the plot if there are many
+        datasets_present = datasets_present[:5] # Just take first 5 for the bar chart
+        
+        for ds in datasets_present:
+            zsisab = next((item for item in tfm_data if item["dataset"] == ds and item["model"] == "ZS-ISAB"), None)
+            tabicl = next((item for item in tfm_data if item["dataset"] == ds and item["model"] == "TabICL"), None)
+            tabdpt = next((item for item in tfm_data if item["dataset"] == ds and item["model"] == "TabDPT"), None)
+            
+            if zsisab and tabicl:
+                ds_names.append(ds.split("/")[-1].replace("openml__", "")[:15]) # Shorten name
+                zsisab_times.append(zsisab["test_time"])
+                tabicl_times.append(tabicl["test_time"])
+                tabdpt_times.append(tabdpt["test_time"] if tabdpt else 0)
+                
+        if ds_names:
+            x_tfm = np.arange(len(ds_names))
+            fig, ax = plt.subplots(figsize=(12, 6))
+            
+            width = 0.25
+            rects1 = ax.bar(x_tfm - width, tabicl_times, width, label='TabICL', color='#E63946')
+            rects2 = ax.bar(x_tfm, tabdpt_times, width, label='TabDPT', color='#457B9D')
+            rects3 = ax.bar(x_tfm + width, zsisab_times, width, label='ZS-ISAB', color='#2A9D8F')
+            
+            ax.set_yscale('log')
+            ax.set_ylabel('Test Inference Time (seconds, log scale)')
+            ax.set_title('Transformer Foundation Models: Inference Speed')
+            ax.set_xticks(x_tfm)
+            ax.set_xticklabels(ds_names, rotation=45, ha='right')
+            ax.legend()
+            plt.tight_layout()
+            plt.savefig(plots_dir / 'tfm_speed_comparison.png', dpi=300)
+            plt.close()
+
     print("Successfully generated all plots in assets/plots/")
 
 if __name__ == "__main__":
