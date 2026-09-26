@@ -2,21 +2,57 @@ import math
 import torch
 import torch.nn.functional as F
 
-def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, chunk_size: int = 16384, verbose: bool = False):
+def get_zsisab_encoder_forward(original_forward_fn, num_prototypes: int = 128, chunk_size: int = 16384, verbose: bool = False, refine_iters: int = 1):
     def zsisab_forward(self, src: torch.Tensor, src_mask=None, src_key_padding_mask=None) -> torch.Tensor:
         try:
-            return _zsisab_forward_impl(self, original_forward_fn, src, src_mask, src_key_padding_mask, num_prototypes, chunk_size, verbose)
+            return _zsisab_forward_impl(self, original_forward_fn, src, src_mask, src_key_padding_mask, num_prototypes, chunk_size, verbose, refine_iters)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             fallback_chunk = max(1024, chunk_size // 2)
             if verbose:
                 print(f"⚠️ CUDA OOM with chunk_size={chunk_size}, retrying with chunk_size={fallback_chunk}")
-            return _zsisab_forward_impl(self, original_forward_fn, src, src_mask, src_key_padding_mask, num_prototypes, fallback_chunk, verbose)
+            return _zsisab_forward_impl(self, original_forward_fn, src, src_mask, src_key_padding_mask, num_prototypes, fallback_chunk, verbose, refine_iters)
 
     return zsisab_forward
 
 
-def _zsisab_forward_impl(self, original_forward_fn, src: torch.Tensor, src_mask, src_key_padding_mask, num_prototypes: int, chunk_size: int, verbose: bool = False) -> torch.Tensor:
+def _refine_inducing_points(train_rows: torch.Tensor, init_idx: torch.Tensor, M: int, chunk_size: int, iters: int) -> torch.Tensor:
+    """
+    Turns M randomly-sampled anchor rows into a cheap coreset summary via a
+    few chunked Lloyd (k-means) iterations over the (already-embedded) rows.
+    Random rows lose whatever training points don't happen to land in the
+    sample; centroids of the actual data density don't. Fully vectorized and
+    chunked so it stays O(N*M) like the rest of this file and scales to
+    millions of rows without a Python-level per-row loop.
+    """
+    C = train_rows[:, init_idx, :].clone()
+    N = train_rows.shape[1]
+    if iters <= 0 or N <= M:
+        return C
+
+    for _ in range(iters):
+        sum_acc = torch.zeros_like(C)
+        count_acc = torch.zeros(C.shape[0], M, device=C.device, dtype=C.dtype)
+
+        for i in range(0, N, chunk_size):
+            chunk = train_rows[:, i:i + chunk_size, :]
+            c_norm = (C ** 2).sum(-1)
+            x_norm = (chunk ** 2).sum(-1)
+            dist = x_norm.unsqueeze(-1) - 2 * torch.matmul(chunk, C.transpose(-2, -1)) + c_norm.unsqueeze(1)
+            assign = dist.argmin(dim=-1)
+            onehot = F.one_hot(assign, num_classes=M).to(chunk.dtype)
+
+            sum_acc += torch.einsum('bcm,bce->bme', onehot, chunk)
+            count_acc += onehot.sum(dim=1)
+
+        has_points = count_acc > 0
+        new_C = sum_acc / count_acc.clamp(min=1).unsqueeze(-1)
+        C = torch.where(has_points.unsqueeze(-1), new_C, C)
+
+    return C
+
+
+def _zsisab_forward_impl(self, original_forward_fn, src: torch.Tensor, src_mask, src_key_padding_mask, num_prototypes: int, chunk_size: int, verbose: bool = False, refine_iters: int = 1) -> torch.Tensor:
     # Force no_grad just in case TabPFN leaked gradients
     with torch.no_grad():
         if self.pre_norm:
@@ -56,8 +92,8 @@ def _zsisab_forward_impl(self, original_forward_fn, src: torch.Tensor, src_mask,
             generator.manual_seed(layer_seed)
             perm = torch.randperm(N, device=src_.device, generator=generator)
             selected_indices = perm[:M]
-            
-            I = train_rows[:, selected_indices, :]
+
+            I = _refine_inducing_points(train_rows, selected_indices, M, chunk_size, refine_iters)
             
             Q_I = F.linear(I, W_q, b_q).view(B, M, num_heads, head_dim).transpose(1, 2)
             K_I = F.linear(I, W_k, b_k).view(B, M, num_heads, head_dim).transpose(1, 2)

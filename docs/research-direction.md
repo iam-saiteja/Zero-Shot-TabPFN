@@ -1,6 +1,7 @@
 # Research direction: ZS-ISAB going forward
 
-Written 2026-09-26. Replaces `scratch_architecture_analysis.md` (moved to
+Written 2026-09-26. See `docs/research-log.md` for the running log of which
+choice got picked and why, updated as work progresses. Replaces `scratch_architecture_analysis.md` (moved to
 `scratch/architecture_analysis_UNVERIFIED.md`, gitignored) — that doc
 described "S3T2/SPARK/DART" results with no corresponding code anywhere in
 the repo. Nothing here reuses those numbers.
