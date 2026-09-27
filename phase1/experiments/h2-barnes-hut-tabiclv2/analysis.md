@@ -107,14 +107,43 @@ as t=2 -> 4 -> 8), which is what theory predicts and the pre-fix numbers
 did not show. This is a real, mechanistically-understood result, not a
 metric-picking exercise.
 
+## Confirmatory sweep: same 10 datasets + 2 seeds as H1, post-fix (`sweep.py`)
+
+M=64, t=4, anchor-only vs Barnes-Hut, against the real pretrained TabICLv2
+checkpoint. 2 of 10 datasets (adult, jm1) produced NaN fidelity — root
+cause confirmed, not a mystery: this rig calls `_train_forward` directly on
+raw feature values (bypassing `TabICLClassifier`'s normal input
+normalization), and those two datasets have raw features up to ~1.37M,
+which overflows the softmax. Artifact of the test rig, not the method —
+excluded from the stats below rather than silently included or hidden.
+
+**Across the remaining 8 real datasets x 2 seeds = 16 comparisons:**
+
+| | mean fidelity | median fidelity | mean agreement | mean acc_delta vs exact |
+|---|---|---|---|---|
+| anchor-only | 0.111 | 0.104 | 0.873 | -6.19pp |
+| Barnes-Hut (t=4) | 0.050 | 0.045 | 0.945 | -1.75pp |
+
+**Barnes-Hut beats anchor-only on fidelity in 16/16 pairs, zero
+exceptions.** Roughly halves the fidelity error on average and cuts the
+mean accuracy loss vs exact attention from -6.2pp to -1.75pp. This is now a
+real, multi-dataset, multi-seed, bug-fixed, mechanistically-understood
+result on an actual pretrained SOTA-adjacent model — the strongest evidence
+in this project so far that the method (validated on TabPFN v1 in H1)
+generalizes to a current model.
+
+**Still true, unchanged:** single train/test split per dataset-seed (not
+H1's repeated-fold rigor), still a masked-not-gathered implementation (no
+speed win demonstrated yet), still not the real TabArena protocol via
+`harness/`, and the two NaN datasets need the rig fixed to go through
+proper preprocessing before they can be included.
+
 ## Next steps, in order
 
-1. **Not done:** repeat with H1's rigor — multiple seeds, multiple datasets
-   — before trusting any of the numbers above as more than a first look.
-2. Investigate the fidelity-vs-agreement disagreement rather than pick the
-   metric that looks better.
-3. A real sparse/gather kernel — this near-field version still computes
+1. Fix the test rig to use TabICLClassifier's real preprocessing (resolves
+   the adult/jm1 NaNs, and gets closer to how the model is actually used).
+2. A real sparse/gather kernel — this near-field version still computes
    scores over all `train_size` rows and masks, so it does not yet save
    compute, only tests correctness.
-4. Only then: real datasets via `harness/` for genuine cached TabArena
-   comparisons instead of another custom pilot script.
+3. Real datasets via `harness/` for genuine cached TabArena comparisons
+   instead of another custom pilot script — the real test.

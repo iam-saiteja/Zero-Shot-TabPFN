@@ -362,3 +362,29 @@ instead of disagreeing. Full before/after table in
 **Still not done, unchanged from before:** multi-seed/multi-dataset repeat
 at H1's rigor, a real sparse kernel (still O(train_size) per query, masked
 not gathered), and real TabArena numbers via `harness/`.
+
+## 2026-09-27 — H2 confirmed across 8 real datasets: Barnes-Hut beats anchor-only, 16/16
+
+Ran the (bug-fixed) near-field patch across the same 10 OpenML datasets + 2
+seeds H1 used, against the real TabICLv2 checkpoint (`sweep.py`). First run
+failed on a real bug in the sweep script itself (batch dim not squeezed
+before `accuracy_score` - all 20 runs failed identically on the same shape
+error, fixed in one line, rerun).
+
+2 of 10 datasets (adult, jm1) give NaN fidelity - root cause confirmed:
+this rig bypasses TabICLClassifier's normal input normalization, and those
+two datasets have raw feature magnitudes up to ~1.37M, overflowing the
+softmax. Test-rig artifact, not a method flaw - excluded from stats, not
+hidden.
+
+**Across the remaining 8 datasets x 2 seeds = 16 comparisons: Barnes-Hut
+beats anchor-only on fidelity in all 16, zero exceptions.** Mean fidelity
+0.050 vs 0.111, mean accuracy loss vs exact -1.75pp vs -6.19pp. Strongest
+result in the project so far - real checkpoint, real data, multi-dataset,
+bug-fixed, mechanistically understood (the log-count bias fix from the
+previous entry is exactly what made this consistent). Full table:
+`experiments/h2-barnes-hut-tabiclv2/analysis.md`.
+
+**Still open:** fix the rig to use real preprocessing (kills the NaN
+cases), a real sparse kernel (still no speed win shown), and the actual
+TabArena protocol via `harness/` instead of a custom pilot script.

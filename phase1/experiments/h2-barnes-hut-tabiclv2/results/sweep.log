@@ -1,0 +1,21 @@
+adult 0 van_acc 0.725 {'anchor': (nan, 1.0), 'barnes_hut': (nan, 1.0)}
+adult 1 van_acc 0.68 {'anchor': (nan, 1.0), 'barnes_hut': (nan, 1.0)}
+bank-marketing 0 van_acc 0.87 {'anchor': (0.0961, 0.95), 'barnes_hut': (0.0852, 0.955)}
+bank-marketing 1 van_acc 0.9 {'anchor': (0.1033, 1.0), 'barnes_hut': (0.0459, 1.0)}
+electricity 0 van_acc 0.77 {'anchor': (0.1377, 0.84), 'barnes_hut': (0.0737, 0.88)}
+electricity 1 van_acc 0.8 {'anchor': (0.1261, 0.92), 'barnes_hut': (0.0814, 0.93)}
+MagicTelescope 0 van_acc 0.84 {'anchor': (0.2473, 0.82), 'barnes_hut': (0.1213, 0.875)}
+MagicTelescope 1 van_acc 0.87 {'anchor': (0.2103, 0.81), 'barnes_hut': (0.0995, 0.94)}
+pendigits 0 van_acc 0.845 {'anchor': (0.109, 0.58), 'barnes_hut': (0.0211, 0.91)}
+pendigits 1 van_acc 0.87 {'anchor': (0.1053, 0.655), 'barnes_hut': (0.0213, 0.875)}
+phoneme 0 van_acc 0.875 {'anchor': (0.1484, 0.86), 'barnes_hut': (0.0449, 0.975)}
+phoneme 1 van_acc 0.84 {'anchor': (0.1179, 0.83), 'barnes_hut': (0.0309, 0.98)}
+spambase 0 van_acc 0.925 {'anchor': (0.0735, 0.945), 'barnes_hut': (0.0535, 0.96)}
+spambase 1 van_acc 0.955 {'anchor': (0.0687, 0.97), 'barnes_hut': (0.0444, 0.99)}
+satimage 0 van_acc 0.875 {'anchor': (0.0401, 0.91), 'barnes_hut': (0.0259, 0.925)}
+satimage 1 van_acc 0.91 {'anchor': (0.0284, 0.935), 'barnes_hut': (0.0195, 0.96)}
+jm1 0 van_acc 0.81 {'anchor': (nan, 1.0), 'barnes_hut': (nan, 1.0)}
+jm1 1 van_acc 0.815 {'anchor': (nan, 1.0), 'barnes_hut': (nan, 1.0)}
+kr-vs-kp 0 van_acc 0.985 {'anchor': (0.0766, 0.97), 'barnes_hut': (0.0162, 0.985)}
+kr-vs-kp 1 van_acc 0.98 {'anchor': (0.0906, 0.975), 'barnes_hut': (0.0177, 0.985)}
+done 40 rows -> C:\Users\iamsa\Documents\ISAB-r\phase1\experiments\h2-barnes-hut-tabiclv2\code\..\results\sweep_results.csv
