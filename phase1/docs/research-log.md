@@ -296,3 +296,25 @@ follow-up once H2 works, not an excluded option.
 
 `phase2/` created as an explicit placeholder — not started, per instruction
 to work on Phase 1 only for now.
+
+## 2026-09-27 — H2 smoke test passed: patch mechanism verified on TabICLv2
+
+Patched `ICLearning.tf_icl` (instance-level, not the shared class - `tf_col`/
+`tf_row` provably untouched via object-identity check) to replace exact
+`k=v=q[:train_size]` attention with k-means coreset anchors (the anchor half
+of H1's method; near-field exact expansion not yet ported - needs
+`attn_mask`-based per-query masking, a real next step, not done yet).
+
+All 4 locked sanity checks + the fidelity gate passed on an untrained,
+random-init TabICL. Caught and fixed a real gotcha before trusting the
+result: the first run used TabICL's default `zero_init=True`, which zeros
+the attention output projection, making the divergence check pass
+trivially (0.0000 diff) regardless of whether the patch was even correct.
+Reran with `zero_init=False`; the real number is 0.0084 mean abs diff
+(7.2% relative) - same order of magnitude as H1's real numbers, not
+inflated or trivial.
+
+**This is a mechanism check, not an accuracy or speed result** - untrained
+weights, tiny config, anchor-only (no near-field yet). Details and honest
+scope: `experiments/h2-barnes-hut-tabiclv2/analysis.md`. Next: run this
+same patch against TabICLv2's real pretrained checkpoint.
