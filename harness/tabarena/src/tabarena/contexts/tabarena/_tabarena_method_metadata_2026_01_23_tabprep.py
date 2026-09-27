@@ -1,0 +1,70 @@
+"""Tabprep-preprocessing benchmark results.
+
+These four entries (`PrepLightGBM`, `PrepLinearModel`, `PrepTabM`,
+`PrepRealTabPFN-v2.5`) are benchmark-result metadata for a tabprep
+preprocessing variant of each underlying model. No tabarena-side
+`Prep*Model` wrapper class exists, so they don't fit the per-model
+`ModelInfo` pattern in `tabarena/models/<key>/` and are kept here as
+standalone `MethodMetadata` instances. Treat them as "metadata-only"
+config entries — the registry/dispatch surface ignores them.
+"""
+
+from __future__ import annotations
+
+from tabarena.models._method_metadata import MethodMetadata
+
+tabprep_gbm_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="PrepLightGBM",
+    suite="tabarena-2026-01-23",
+    display_name="PrepLightGBM",
+    method_type="config",
+    compute="cpu",
+    date="2026-01-23",
+    date_introduced="2016-09",  # LightGBM (preprocessing ablation)
+    ag_key="PREP_GBM",
+    # config_default="PrepLightGBM_c1_BAG_L1",  # FIXME
+    config_default="prep_LightGBM_icml_v3_c1_BAG_L1",
+    is_bag=True,
+)
+
+tabprep_lr_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="PrepLinearModel",
+    suite="tabarena-2026-01-23",
+    display_name="PrepLinear",
+    method_type="config",
+    compute="cpu",
+    date="2026-01-23",
+    date_introduced="1958",  # LinearModel (preprocessing ablation)
+    ag_key="PREP_LR",
+    # config_default="PrepLinearModel_c1_BAG_L1",  # FIXME
+    config_default="prep_LinearModel_icml_v3_c1_BAG_L1",
+    is_bag=True,
+)
+
+
+tabprep_tabm_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="PrepTabM",
+    suite="tabarena-2026-01-23",
+    display_name="PrepTabM",
+    method_type="config",
+    compute="gpu",
+    date="2026-01-23",
+    date_introduced="2024-10",  # TabM (preprocessing ablation)
+    ag_key="PREP_TABM",
+    config_default="prep_TabM_c1_BAG_L1",  # FIXME
+    is_bag=True,
+)
+
+
+tabprep_realtabpfnv250_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="PrepRealTabPFN-v2.5",
+    suite="tabarena-2026-01-23",
+    display_name="PrepRealTabPFN-2.5",
+    method_type="config",
+    compute="gpu",
+    date="2026-01-23",
+    date_introduced="2025-11",  # RealTabPFN-v2.5 (preprocessing ablation)
+    ag_key="PREP_REALTABPFN-V2.5",
+    config_default="prep_RealTabPFN-v2.5_c1_BAG_L1",  # FIXME
+    is_bag=False,
+)

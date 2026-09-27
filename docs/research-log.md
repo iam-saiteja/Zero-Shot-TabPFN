@@ -213,3 +213,41 @@ so the next session picks it up instead of re-deciding from scratch.
 **Why:** described "S3T2/SPARK/DART" results with no corresponding
 implementation anywhere in the repo — fabricated, not reproducible. Decided
 not to build on it or treat its numbers as a baseline.
+
+## 2026-09-27 — Borrowed the real eval harness from Documents/tabarena; that project retired locally
+
+User pointed out a second local project, `Documents/tabarena` — their fork
+of the real upstream AutoGluon `tabarena` repo (`iam-saiteja/tabarena`,
+branch `add-zsisab`), not a throwaway test. It had real infrastructure
+ISAB-r lacked: the actual `tabarena`/`bencheval` evaluation packages with
+real cached official TabArena baselines, plus working (committed, not just
+brainstormed) implementations of `zsisab`, `zstabfm`, and **S3T2** —
+correcting what I said earlier about S3T2 being purely fabricated; it
+exists as real code there, I just didn't know that repo existed.
+
+**Found an overclaim worth flagging plainly:** a commit there
+("feat(zstabfm): ... achieve #1 Rank on TabArena Leaderboard") is not
+supported by the results sitting next to it in the same repo — the actual
+`tabarena_leaderboard.csv` from that run shows ZSTABFM at Elo 1866.8,
+average rank ~7.4, behind TABFM (1944.6) and TabFM+ (1935.3), on an 18-task
+subset, not the full 51-task suite. Recorded honestly in `harness/README.md`
+rather than repeated at face value.
+
+**Decision (user's choice):** keep ISAB-r as the primary project, but
+borrow the real harness rather than continue with ISAB-r's rough
+OpenML-CC18 approximation (`legacy/benchmarks/run_tab_arena.py`). Copied
+`packages/tabarena` and `packages/bencheval` into `harness/`, plus a
+reference results snapshot. Per explicit instruction: committed and pushed
+the source repo's uncommitted work to its GitHub remote first (nothing
+lost), then deleted `Documents/tabarena` entirely, including its `.venv`.
+
+**Not yet done:** the harness isn't installed/tested in this repo's
+environment yet — it needs its own dependency set (AutoGluon-heavy, likely
+too large for `.venv-tabicl`). That's the next real step before H2's
+TabICLv2 port work can be measured against genuine cached TabArena numbers
+instead of approximations.
+
+Also removed `.venv` (old TabPFN v1 testbed env) from this repo per
+explicit request — `.venv-tabicl` is now the only environment here.
+Reinstall `.venv` from `requirements.txt` only if `zsisab`/H1 needs
+re-running.

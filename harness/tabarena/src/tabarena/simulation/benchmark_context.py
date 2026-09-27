@@ -1,0 +1,715 @@
+from __future__ import annotations
+
+import os
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import TYPE_CHECKING, Self
+
+import boto3
+from autogluon.common.loaders import load_json, load_pd
+from autogluon.common.savers import save_json
+from autogluon.common.utils.s3_utils import download_s3_files, is_s3_url, s3_path_to_bucket_prefix
+from botocore.errorfactory import ClientError
+
+from tabarena.loaders import Paths, load_configs, load_results
+from tabarena.repository.evaluation_repository import EvaluationRepository
+from tabarena.simulation.dense_utils import intersect_folds_and_datasets, prune_zeroshot_gt
+from tabarena.simulation.simulation_context import ZeroshotSimulatorContext
+from tabarena.utils.download import download_files
+from tabarena.utils.huggingfacehub_utils import download_from_huggingface
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+    from tabarena.predictions.tabular_predictions import TabularModelPredictions
+    from tabarena.simulation.ground_truth import GroundTruth
+
+
+def download_from_s3(
+    name: str, include_zs: bool, exists: str, dry_run: bool, s3_download_map, benchmark_paths, verbose: bool
+):
+    print(f'Downloading files for {name} context... (include_zs={include_zs}, exists="{exists}", dry_run={dry_run})')
+    if dry_run:
+        print("\tNOTE: `dry_run=True`! Files will not be downloaded.")
+    assert exists in ["raise", "ignore", "overwrite"]
+    assert s3_download_map is not None, "self.s3_download_map is None: download functionality is disabled"
+    file_paths_expected = benchmark_paths.get_file_paths(include_zs=include_zs)
+
+    file_paths_to_download = [f for f in file_paths_expected if f in s3_download_map]
+    if len(file_paths_to_download) == 0:
+        print("WARNING: Matching file paths to download is 0! `self.s3_download_map` probably has incorrect keys.")
+    file_paths_already_exist = [f for f in file_paths_to_download if benchmark_paths.exists(f)]
+    file_paths_missing = [f for f in file_paths_to_download if not benchmark_paths.exists(f)]
+
+    if exists == "raise":
+        if file_paths_already_exist:
+            raise AssertionError(
+                f'`exists="{exists}"`, '
+                f"and found {len(file_paths_already_exist)} files that already exist locally!\n"
+                f"\tExisting Files: {file_paths_already_exist}\n"
+                f"\tMissing  Files: {file_paths_missing}\n"
+                f"Either manually inspect and delete existing files, "
+                f'set `exists="ignore"` to keep your local files and only download missing files, '
+                f'or set `exists="overwrite"` to overwrite your existing local files.'
+            )
+    elif exists == "ignore":
+        file_paths_to_download = file_paths_missing
+    elif exists == "overwrite":
+        pass  # keep file_paths_to_download as-is (download everything)
+    else:
+        raise ValueError(
+            f'Invalid value for exists (`exists="{exists}"`). Valid values: {["raise", "ignore", "overwrite"]}'
+        )
+
+    s3_to_local_tuple_list = [(val, key) for key, val in s3_download_map.items() if key in file_paths_to_download]
+
+    log_extra = ""
+
+    num_exist = len(file_paths_already_exist)
+    if exists == "overwrite":
+        if num_exist > 0:
+            log_extra += f"\tWill overwrite {num_exist} files that exist locally:\n\t\t{file_paths_already_exist}"
+        else:
+            log_extra = ""
+    if exists == "ignore":
+        log_extra += f"\tWill skip {num_exist} files that exist locally:\n\t\t{file_paths_already_exist}"
+    if file_paths_missing:
+        if log_extra:
+            log_extra += "\n"
+        log_extra += (
+            f"Will download {len(file_paths_missing)} files that are missing locally:\n\t\t{file_paths_missing}"
+        )
+
+    if log_extra:
+        print(log_extra)
+    print(f"\tDownloading {len(s3_to_local_tuple_list)} files from s3 to local...")
+    for s3_path, local_path in s3_to_local_tuple_list:
+        print(f'\t\t"{s3_path}" -> "{local_path}"')
+    s3_required_list = [(s3_path, local_path) for s3_path, local_path in s3_to_local_tuple_list if s3_path[:2] == "s3"]
+    urllib_required_list = [
+        (s3_path, local_path) for s3_path, local_path in s3_to_local_tuple_list if s3_path[:2] != "s3"
+    ]
+    if urllib_required_list:
+        download_files(remote_to_local_tuple_list=urllib_required_list, dry_run=dry_run, verbose=verbose)
+    if s3_required_list:
+        download_s3_files(s3_to_local_tuple_list=s3_required_list, dry_run=dry_run, verbose=verbose)
+
+
+@dataclass
+class BenchmarkPaths:
+    configs: str
+    baselines: str = None
+    task_metadata: str = None
+    metadata_join_column: str = "dataset"
+    path_pred_proba: str = None
+    datasets: list[str] = None
+    zs_pp: list[str] = None
+    zs_gt: list[str] = None
+    configs_hyperparameters: list[str] = None
+    relative_path: str = None
+
+    def __post_init__(self):
+        if self.zs_pp is not None and isinstance(self.zs_pp, str):
+            self.zs_pp = [self.zs_pp]
+        if self.zs_gt is not None and isinstance(self.zs_gt, str):
+            self.zs_gt = [self.zs_gt]
+        if self.configs_hyperparameters is not None and isinstance(self.configs_hyperparameters, str):
+            self.configs_hyperparameters = [self.configs_hyperparameters]
+
+    @property
+    def configs_full(self):
+        return self._to_full(self.configs)
+
+    @property
+    def baselines_full(self):
+        return self._to_full(self.baselines)
+
+    @property
+    def zs_pp_full(self):
+        return self._to_full_lst(self.zs_pp)
+
+    @property
+    def zs_gt_full(self):
+        return self._to_full_lst(self.zs_gt)
+
+    @property
+    def configs_hyperparameters_full(self):
+        return self._to_full_lst(self.configs_hyperparameters)
+
+    @property
+    def task_metadata_full(self):
+        return self._to_full(self.task_metadata)
+
+    @property
+    def path_pred_proba_full(self):
+        return self._to_full(self.path_pred_proba)
+
+    def _to_full(self, path: str) -> str | None:
+        if self.relative_path is None:
+            return path
+        if path is None:
+            return None
+        return str(Path(self.relative_path) / path)
+
+    def _to_full_lst(self, paths: list[str] | None) -> list[str] | None:
+        if self.relative_path is None:
+            return paths
+        if paths is None:
+            return None
+        return [self._to_full(path) for path in paths]
+
+    def print_summary(self):
+        max_str_len = max(len(key) for key in self.__dict__)
+        print("BenchmarkPaths Summary:")
+        print("\n".join(f"\t{key + ' ' * (max_str_len - len(key))} = {value}" for key, value in self.__dict__.items()))
+
+    def get_file_paths(self, include_zs: bool = True) -> list[str]:
+        file_paths = [
+            self.configs_full,
+            self.baselines_full,
+            self.task_metadata_full,
+        ]
+        if include_zs:
+            file_paths += self.zs_pp_full
+            file_paths += self.zs_gt_full
+        return [f for f in file_paths if f is not None]
+
+    def assert_exists_all(self, check_zs=True):
+        self._raise_if_missing(self.missing_files(check_zs=check_zs))
+
+    @staticmethod
+    def _raise_if_missing(missing_files: list[str]):
+        if missing_files:
+            missing_files_str = "".join(f'\n\t"{m}"' for m in missing_files)
+            raise ValueError(f"Missing {len(missing_files)} required files: [{missing_files_str}\n]")
+
+    def exists_all(self, check_zs: bool = True) -> bool:
+        return not self.missing_files(check_zs=check_zs)
+
+    def missing_files(self, check_zs: bool = True) -> list:
+        required_files = self.get_file_paths(include_zs=check_zs)
+        return self._missing_files(required_files)
+
+    @classmethod
+    def _missing_files(cls, filepaths: list[str]) -> list[str]:
+        """Return the subset of ``filepaths`` that does not exist, minimizing filesystem
+        round trips: local paths are grouped by parent directory and checked with one
+        ``os.scandir`` per directory instead of one ``stat`` per file. Artifacts hold
+        thousands of per-task files, so on network filesystems (e.g. NFS) per-file stats
+        dominate loading time. S3 paths keep the per-file check.
+        """
+        missing = []
+        local_by_dir: dict[str, list[tuple[str, str]]] = {}
+        for f in filepaths:
+            if is_s3_url(path=f):
+                if not cls.exists(f):
+                    missing.append(f)
+            else:
+                p = Path(f)
+                local_by_dir.setdefault(str(p.parent), []).append((p.name, f))
+        for parent, entries in local_by_dir.items():
+            try:
+                with os.scandir(parent) as it:
+                    names = {e.name for e in it}
+            except (FileNotFoundError, NotADirectoryError):
+                missing.extend(f for _, f in entries)
+                continue
+            missing.extend(f for name, f in entries if name not in names)
+        return missing
+
+    @staticmethod
+    def exists(filepath: str) -> bool:
+        if filepath is None:
+            raise AssertionError("Filepath cannot be None!")
+        filepath = str(filepath)
+
+        if is_s3_url(path=filepath):
+            s3_bucket, s3_prefix = s3_path_to_bucket_prefix(s3_path=filepath)
+            s3 = boto3.client("s3")
+            try:
+                s3.head_object(Bucket=s3_bucket, Key=s3_prefix)
+            except ClientError:
+                return False
+        elif not Path(filepath).exists():
+            return False
+        return True
+
+    def load_results(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        df_configs, df_metadata = load_results(
+            path_configs=self.configs_full,
+            path_metadata=self.task_metadata_full,
+            metadata_join_column=self.metadata_join_column,
+            require_tid_in_metadata=self.task_metadata is not None,
+        )
+        return df_configs, df_metadata
+
+    def load_baselines(self) -> pd.DataFrame | None:
+        if self.baselines is None:
+            return None
+        return load_pd.load(self.baselines_full)
+
+    def load_predictions(
+        self,
+        zsc: ZeroshotSimulatorContext,
+        prediction_format: str = "memmap",
+        verbose: bool = True,
+        validate: bool = True,
+    ) -> tuple[TabularModelPredictions, GroundTruth, ZeroshotSimulatorContext]:
+        """:param prediction_format: Determines the format of the loaded tabular_predictions. Default = "memmap".
+        "memmap": Fast and low memory usage.
+        "memopt": Very fast and high memory usage.
+        "mem": Slow and high memory usage, simplest format to debug.
+        :param validate: If True, checks that all zs files exist before loading. Callers that
+        have already validated (e.g. :meth:`BenchmarkContext.load`) pass False to skip the
+        filesystem sweep.
+        """
+        if validate:
+            self._raise_if_missing(self._missing_files(list(self.zs_pp_full) + list(self.zs_gt_full)))
+        zeroshot_pred_proba, zeroshot_gt, zsc = load_zeroshot_input(
+            path_pred_proba=self.path_pred_proba_full,
+            paths_gt=self.zs_gt_full,
+            zsc=zsc,
+            datasets=self.datasets,
+            prediction_format=prediction_format,
+            verbose=verbose,
+        )
+        return zeroshot_pred_proba, zeroshot_gt, zsc
+
+    def load_configs_hyperparameters(self) -> dict:
+        return load_configs(self.configs_hyperparameters_full)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class BenchmarkContext:
+    def __init__(
+        self,
+        *,
+        folds: list[int],
+        benchmark_paths: BenchmarkPaths,
+        name: str | None = None,
+        description: str | None = None,
+        date: str | None = None,
+        s3_download_map: dict[str, str] | None = None,
+        config_fallback: str | None = None,
+    ):
+        self.folds = folds
+        self.benchmark_paths = benchmark_paths
+        self.name = name
+        self.description = description
+        self.date = date
+        self.s3_download_map = s3_download_map
+        self.config_fallback = config_fallback
+
+    @classmethod
+    def from_paths(
+        cls,
+        *,
+        folds: list[int],
+        name: str | None = None,
+        description: str | None = None,
+        date: str | None = None,
+        s3_download_map: dict[str, str] | None = None,
+        config_fallback: str | None = None,
+        **paths,
+    ):
+        return cls(
+            folds=folds,
+            name=name,
+            description=description,
+            date=date,
+            s3_download_map=s3_download_map,
+            config_fallback=config_fallback,
+            benchmark_paths=BenchmarkPaths(**paths),
+        )
+
+    def download(
+        self,
+        include_zs: bool = True,
+        exists: str = "raise",
+        verbose: bool = True,
+        dry_run: bool = False,
+        use_s3: bool = True,
+    ):
+        """Downloads all BenchmarkContext required files from s3 to local disk.
+
+        :param include_zs: If True, downloads zpp and gt files if they exist.
+        :param exists: This determines the behavior of the file download.
+            Options: ['ignore', 'raise', 'overwrite']
+            If 'ignore': Will only download missing files and ignore files that already exist locally.
+                Note: Does not guarantee local and remote files are identical.
+            If 'raise': Will raise an exception if any local files exist. Otherwise, it will download all remote files.
+                Guarantees alignment between local and remote files (at the time of download)
+            If 'overwrite': Will download all remote files, overwriting any pre-existing local files.
+                Guarantees alignment between local and remote files (at the time of download)
+        :param dry_run: If True, will not download files, but instead log what would have been downloaded.
+        """
+        if use_s3:
+            download_from_s3(
+                name=self.name,
+                include_zs=include_zs,
+                exists=exists,
+                dry_run=dry_run,
+                s3_download_map=self.s3_download_map,
+                benchmark_paths=self.benchmark_paths,
+                verbose=verbose,
+            )
+        else:
+            if verbose:
+                print(f'Downloading files for {self.name} context... (include_zs={include_zs}, exists="{exists}")')
+            download_from_huggingface(
+                datasets=self.benchmark_paths.datasets,
+            )
+
+    def load(
+        self,
+        folds: list[int] | None = None,
+        load_predictions: bool = True,
+        download_files: bool = True,
+        prediction_format: str = "memmap",
+        exists: str = "ignore",
+        use_s3: bool = True,
+        verbose: bool = True,
+    ) -> tuple[ZeroshotSimulatorContext, TabularModelPredictions, GroundTruth]:
+        """:param folds: If None, uses self.folds as default.
+            If specified, must be a subset of `self.folds`. This will filter the results to only the specified folds.
+            Restricting folds can be useful to speed up experiments.
+        :param load_predictions: If True, loads zpp and gt files.
+        :param download_files: If True, will download required files from s3 if they don't already exist locally.
+        :param prediction_format: Determines the format of the loaded tabular_predictions. Default = "memmap".
+            "memmap": Fast and low memory usage.
+            "memopt": Very fast and high memory usage.
+            "mem": Slow and high memory usage, simplest format to debug.
+        :param exists: If download_files=True, this determines the behavior of the file download.
+            Options: ['ignore', 'raise', 'overwrite']
+            Refer to `self.download` for details.
+        :return: Returns four objects in the following order:
+            zsc: ZeroshotSimulatorContext
+                The zeroshot simulator context object.
+            zeroshot_pred_proba: TabularModelPredictions
+                # TODO: Consider making a part of zsc.
+                The prediction probabilities of all configs for all tasks.
+                Will be None if `load_predictions=False`.
+            zeroshot_gt : dict
+                # TODO: Make its own object instead of a raw dict.
+                # TODO: Consider making a part of zsc or zeroshot_pred_proba
+                The target ground truth for both validation and test samples for all tasks.
+                Will be None if `load_predictions=False`.
+        """
+        assert prediction_format in ["memmap", "memopt", "mem"]
+        if folds is None:
+            folds = self.folds
+        for f in folds:
+            assert f in self.folds, f"Fold {f} does not exist in available folds! self.folds={self.folds}"
+
+        if verbose:
+            print(
+                f"Loading BenchmarkContext:\n"
+                f"\tname: {self.name}\n"
+                f"\tdescription: {self.description}\n"
+                f"\tdate: {self.date}\n"
+                f"\tfolds: {folds}"
+            )
+        missing_files = self.benchmark_paths.missing_files(check_zs=load_predictions)
+        if download_files and exists == "ignore" and not missing_files:
+            download_files = False
+        if download_files:
+            if verbose:
+                self.benchmark_paths.print_summary()
+            if self.s3_download_map is None:
+                if missing_files:
+                    missing_files_str = [f'\n\t"{m}"' for m in missing_files]
+                    raise FileNotFoundError(
+                        f"Missing {len(missing_files)} required files: \n[{','.join(missing_files_str)}\n]"
+                    )
+            if verbose:
+                print("Downloading input files from s3...")
+            self.download(include_zs=load_predictions, exists=exists, use_s3=use_s3, verbose=verbose)
+            missing_files = self.benchmark_paths.missing_files(check_zs=load_predictions)
+        self.benchmark_paths._raise_if_missing(missing_files)
+
+        configs_hyperparameters = self.load_configs_hyperparameters()
+        zsc = self._load_zsc(folds=folds, configs_hyperparameters=configs_hyperparameters, verbose=verbose)
+
+        if load_predictions:
+            zeroshot_pred_proba, zeroshot_gt, zsc = self._load_predictions(
+                zsc=zsc, prediction_format=prediction_format, verbose=verbose
+            )
+        else:
+            zeroshot_pred_proba = None
+            zeroshot_gt = None
+
+        return zsc, zeroshot_pred_proba, zeroshot_gt
+
+    def load_repo(
+        self,
+        folds: list[int] | None = None,
+        load_predictions: bool = True,
+        download_files: bool = True,
+        prediction_format: str = "memmap",
+        exists: str = "ignore",
+        use_s3: bool = True,
+        verbose: bool = True,
+    ) -> EvaluationRepository:
+        zsc, zeroshot_pred_proba, zeroshot_gt = self.load(
+            folds=folds,
+            load_predictions=load_predictions,
+            download_files=download_files,
+            prediction_format=prediction_format,
+            exists=exists,
+            use_s3=use_s3,
+            verbose=verbose,
+        )
+        return EvaluationRepository(
+            zeroshot_context=zsc,
+            tabular_predictions=zeroshot_pred_proba,
+            ground_truth=zeroshot_gt,
+            config_fallback=self.config_fallback,
+        )
+
+    def _load_results(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        df_configs, df_metadata = self.benchmark_paths.load_results()
+        return df_configs, df_metadata
+
+    def load_configs_hyperparameters(self) -> dict:
+        return self.benchmark_paths.load_configs_hyperparameters()
+
+    def _load_predictions(
+        self,
+        zsc: ZeroshotSimulatorContext,
+        prediction_format: str,
+        verbose: bool = True,
+    ) -> tuple[TabularModelPredictions, GroundTruth, ZeroshotSimulatorContext]:
+        # validate=False: `load` has already verified all required files exist.
+        return self.benchmark_paths.load_predictions(
+            zsc=zsc, prediction_format=prediction_format, verbose=verbose, validate=False
+        )
+
+    def _load_zsc(
+        self, folds: list[int], configs_hyperparameters: dict, verbose: bool = True
+    ) -> ZeroshotSimulatorContext:
+        df_configs, df_metadata = self._load_results()
+
+        # Load in real framework results to score against
+        if verbose:
+            print(f"Loading baselines: {self.benchmark_paths.baselines}")
+        df_baselines = self.benchmark_paths.load_baselines()
+
+        score_against_only_baselines = df_baselines is not None
+
+        return ZeroshotSimulatorContext(
+            df_configs=df_configs,
+            folds=folds,
+            df_baselines=df_baselines,
+            df_metadata=df_metadata,
+            score_against_only_baselines=score_against_only_baselines,
+            configs_hyperparameters=configs_hyperparameters,
+        )
+
+    def to_json(self, path: str):
+        output = {
+            "name": self.name,
+            "date": self.date,
+            "description": self.description,
+            "folds": self.folds,
+            "s3_download_map": self.s3_download_map,
+            "config_fallback": self.config_fallback,
+            "benchmark_paths": self.benchmark_paths.to_dict(),
+        }
+        save_json.save(path=path, obj=output)
+
+    @classmethod
+    def from_json(cls, path: str) -> Self:
+        kwargs = load_json.load(path)
+        kwargs["benchmark_paths"] = BenchmarkPaths(**kwargs["benchmark_paths"])
+        return cls(**kwargs)
+
+
+def construct_s3_download_map(
+    s3_prefix: str,
+    path_context: str,
+    split_key: str,
+    files_pp: list[str],
+    files_gt: list[str],
+    task_metadata: str | None = None,
+) -> dict[str, str]:
+    split_value = f"{s3_prefix}model_predictions/"
+    s3_download_map = {
+        # FIXME: COMPARISON ROUNDING ERROR
+        "configs.parquet": "configs.parquet",
+        "baselines.parquet": "baselines.parquet",
+    }
+    if task_metadata is not None:
+        s3_download_map[task_metadata] = task_metadata
+    s3_download_map = {f"{path_context}{k}": f"{s3_prefix}{v}" for k, v in s3_download_map.items()}
+    _s3_download_map_metadata_pp = {f"{split_key}{f}": f"{split_value}{f}" for f in files_pp}
+    _s3_download_map_metadata_gt = {f"{split_key}{f}": f"{split_value}{f}" for f in files_gt}
+    s3_download_map.update(_s3_download_map_metadata_pp)
+    s3_download_map.update(_s3_download_map_metadata_gt)
+    return {Paths.rel_to_abs(k, relative_to=Paths.data_root): v for k, v in s3_download_map.items()}
+
+
+def construct_context(
+    name: str | None,
+    datasets: list[str],
+    folds: list[int],
+    local_prefix: str,
+    s3_prefix: str | None = None,
+    description: str | None = None,
+    date: str | None = None,
+    task_metadata: str | None = None,
+    local_prefix_is_relative: bool = True,
+    has_baselines: bool = True,
+    metadata_join_column: str = "dataset",
+    configs_hyperparameters: list[str] | None = None,
+    is_relative: bool = False,
+    config_fallback: str | None = None,
+    dataset_fold_lst_pp: list[tuple[str, int]] | None = None,
+    dataset_fold_lst_gt: list[tuple[str, int]] | None = None,
+) -> BenchmarkContext:
+    """Parameters
+    ----------
+    name
+    description
+    date
+    datasets
+    folds
+    local_prefix: str, default = None
+        The location for input files to be downloaded to / located.
+    s3_prefix: str, default = None
+        The s3 location for input files to download from.
+        If None, then all files must already exist locally in the `local_prefix` directory.
+        Example: "s3://s3_bucket/foo/bar/2023_08_21/"
+    task_metadata
+
+    Returns:
+    -------
+    BenchmarkContext object that is able to load the data.
+    """
+    if local_prefix_is_relative:
+        path_context = str(Paths.results_root_cache / local_prefix) + os.sep
+    else:
+        path_context = str(Path(local_prefix)) + os.sep
+
+    data_root = Paths.data_root_cache if local_prefix_is_relative else Path(path_context).parent
+
+    split_key = str(Path(path_context) / "model_predictions") + os.sep
+
+    if dataset_fold_lst_pp is None:
+        dataset_fold_lst_pp = [(dataset, fold) for dataset in datasets for fold in folds]
+    if dataset_fold_lst_gt is None:
+        dataset_fold_lst_gt = [(dataset, fold) for dataset in datasets for fold in folds]
+
+    files_pred = ["metadata.json", "pred-test.dat", "pred-val.dat"]
+    _files_pp = [f"{dataset}/{fold}/{f}" for dataset, fold in dataset_fold_lst_pp for f in files_pred]
+
+    files_label = ["label-test.csv.zip", "label-val.csv.zip"]
+    _files_gt = [f"{dataset}/{fold}/{f}" for dataset, fold in dataset_fold_lst_gt for f in files_label]
+
+    if s3_prefix is not None:
+        _s3_download_map = construct_s3_download_map(
+            s3_prefix=s3_prefix,
+            path_context=path_context,
+            split_key=split_key,
+            files_pp=_files_pp,
+            files_gt=_files_gt,
+            task_metadata=task_metadata,
+        )
+    else:
+        _s3_download_map = None
+
+    if is_relative:
+        zs_pp = [str(Path("model_predictions") / f) for f in _files_pp]
+        zs_gt = [str(Path("model_predictions") / f) for f in _files_gt]
+    else:
+        zs_pp = [f"{split_key}{f}" for f in _files_pp]
+        zs_pp = [Paths.rel_to_abs(k, relative_to=data_root) for k in zs_pp]
+        zs_gt = [f"{split_key}{f}" for f in _files_gt]
+        zs_gt = [Paths.rel_to_abs(k, relative_to=data_root) for k in zs_gt]
+
+    if is_relative:
+        _result_paths = dict(configs="configs.parquet")
+    else:
+        _result_paths = dict(
+            configs=str(Path(path_context) / "configs.parquet"),
+        )
+
+    if has_baselines:
+        if is_relative:
+            _result_paths["baselines"] = "baselines.parquet"
+        else:
+            _result_paths["baselines"] = str(Path(path_context) / "baselines.parquet")
+
+    if task_metadata is not None:
+        if is_relative:
+            _task_metadata_path = dict(task_metadata=task_metadata)
+        else:
+            _task_metadata_path = dict(task_metadata=str(Path(path_context) / task_metadata))
+    else:
+        _task_metadata_path = dict()
+
+    if is_relative:
+        split_key = str(Path("model_predictions")) + os.path.sep
+
+    relative_path = str(Path(path_context)) if is_relative else None
+
+    _bag_zs_path = dict(
+        zs_gt=zs_gt,
+        zs_pp=zs_pp,
+        path_pred_proba=split_key,
+    )
+
+    _configs_hyperparameters_path = dict()
+    if configs_hyperparameters is not None:
+        _configs_hyperparameters_path["configs_hyperparameters"] = configs_hyperparameters
+
+    context: BenchmarkContext = BenchmarkContext.from_paths(
+        name=name,
+        description=description,
+        date=date,
+        folds=folds,
+        s3_download_map=_s3_download_map,
+        datasets=datasets,
+        metadata_join_column=metadata_join_column,
+        relative_path=relative_path,
+        config_fallback=config_fallback,
+        **_result_paths,
+        **_bag_zs_path,
+        **_task_metadata_path,
+        **_configs_hyperparameters_path,
+    )
+    return context
+
+
+def load_zeroshot_input(
+    path_pred_proba: str,
+    paths_gt: list[str],
+    datasets: list[str],
+    zsc: ZeroshotSimulatorContext,
+    prediction_format: str = "memmap",
+    verbose: bool = True,
+) -> tuple[TabularModelPredictions, GroundTruth, ZeroshotSimulatorContext]:
+    if verbose:
+        print(
+            f"Loading ZS inputs:\n\tpred_proba:  {path_pred_proba}\n",
+        )
+    # Shared per-task metadata.json cache: load_groundtruth parses each task dir's metadata
+    # once and load_pred reuses it instead of re-reading the same files.
+    metadata_by_dir: dict[str, dict] = {}
+    zeroshot_gt = zsc.load_groundtruth(paths_gt=paths_gt, metadata_by_dir=metadata_by_dir)
+    zeroshot_pred_proba = zsc.load_pred(
+        path_pred_proba=path_pred_proba,
+        datasets=datasets,
+        prediction_format=prediction_format,
+        metadata_by_dir=metadata_by_dir,
+    )
+
+    # keep only dataset whose folds are all present
+    intersect_folds_and_datasets(zsc, zeroshot_pred_proba, zeroshot_gt=zeroshot_gt)
+    zeroshot_pred_proba.restrict_models(zsc.get_configs())
+    zeroshot_gt = prune_zeroshot_gt(
+        dataset_to_tid_dict=zsc.dataset_to_tid_dict, zeroshot_pred_proba=zeroshot_pred_proba, zeroshot_gt=zeroshot_gt
+    )
+
+    return zeroshot_pred_proba, zeroshot_gt, zsc

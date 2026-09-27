@@ -1,0 +1,280 @@
+"""AutoGluon model wrapper for TabM.
+
+The model is built on the official ``tabm`` package (https://github.com/yandex-research/tabm);
+this wrapper handles AutoGluon integration (preprocessing, resources, memory estimation)
+and delegates fitting/prediction to ``_internal._tabm_internal.TabMImplementation``.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+
+import pandas as pd
+from autogluon.tabular.models.abstract.abstract_torch_model import AbstractTorchModel
+
+from ._internal.tabm_utils import get_tabm_auto_batch_size
+
+logger = logging.getLogger(__name__)
+
+
+class TabMModel(AbstractTorchModel):
+    """TabM is an efficient ensemble of MLPs that is trained simultaneously with mostly shared parameters.
+
+    TabM is one of the top performing methods overall on TabArena-v0.1: https://tabarena.ai
+
+    Paper: TabM: Advancing Tabular Deep Learning with Parameter-Efficient Ensembling
+    Authors: Yury Gorishniy, Akim Kotelnikov, Artem Babenko
+    Codebase: https://github.com/yandex-research/tabm
+    License: Apache-2.0
+    """
+
+    ag_key = "TA-TABM"
+    ag_name = "TA-TabM"
+    ag_priority = 85
+    _supported_problem_types = ["binary", "multiclass", "regression"]
+    default_num_gpus = 1
+    default_resources_physical_cores_only = True
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._imputer = None
+        self._features_to_impute = None
+        self._features_to_keep = None
+        self._indicator_columns = None
+        self._features_bool = None
+        self._bool_to_cat = None
+
+    def _fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        X_val: pd.DataFrame = None,
+        y_val: pd.Series = None,
+        time_limit: float | None = None,
+        num_cpus: int = 1,
+        num_gpus: float = 0,
+        verbosity: int = 2,
+        **kwargs,
+    ):
+        start_time = time.time()
+
+        try:
+            # imports various dependencies such as torch, tabm, and rtdl_num_embeddings
+            from torch.cuda import is_available
+
+            from ._internal._tabm_internal import TabMImplementation
+        except ImportError as err:
+            logger.log(
+                40,
+                "\tFailed to import tabm! To use the TabM model, do: `pip install tabarena[tabm]`.",
+            )
+            raise err
+
+        device = "cpu" if num_gpus == 0 else "cuda"
+        if (device == "cuda") and (not is_available()):
+            # FIXME: warn instead and switch to CPU.
+            raise AssertionError(
+                "Fit specified to use GPU, but CUDA is not available on this machine. "
+                "Please switch to CPU usage instead.",
+            )
+
+        if X_val is None:
+            # FIXME: make this a general utility function in autogluon that also handles
+            #  ratio better! Or handle it before _fit based on `can_refit_full`
+            from autogluon.core.utils import generate_train_test_split
+
+            X, X_val, y, y_val = generate_train_test_split(
+                X=X,
+                y=y,
+                problem_type=self.problem_type,
+                test_size=0.33,
+                random_state=0,
+            )
+
+        hyp = self._get_model_params()
+        bool_to_cat = hyp.pop("bool_to_cat", True)
+
+        X = self.preprocess(X, y=y, is_train=True, bool_to_cat=bool_to_cat)
+        if X_val is not None:
+            X_val = self.preprocess(X_val)
+
+        self.model = TabMImplementation(
+            verbosity=verbosity,
+            n_threads=num_cpus,
+            device=device,
+            problem_type=self.problem_type,
+            early_stopping_metric=self.stopping_metric,
+            **hyp,
+        )
+
+        self.model.fit(
+            X_train=X,
+            y_train=y,
+            X_val=X_val,
+            y_val=y_val,
+            cat_col_names=X.select_dtypes(include="category").columns.tolist(),
+            time_to_fit_in_seconds=time_limit - (time.time() - start_time) if time_limit is not None else None,
+        )
+
+    # FIXME: bool_to_cat is a hack: Maybe move to abstract model?
+    def _preprocess(
+        self,
+        X: pd.DataFrame,
+        is_train: bool = False,
+        bool_to_cat: bool = False,
+        **kwargs,
+    ) -> pd.DataFrame:
+        """Imputes missing values via the mean and adds indicator columns for numerical features.
+        Converts indicator columns to categorical features to avoid them being treated as numerical by RealMLP.
+        """
+        X = super()._preprocess(X, **kwargs)
+
+        if is_train:
+            self._bool_to_cat = bool_to_cat
+            self._features_bool = self._feature_metadata.get_features(
+                required_special_types=["bool"],
+            )
+        if self._bool_to_cat and self._features_bool:
+            # FIXME: Use CategoryFeatureGenerator? Or tell the model which is category
+            X = X.copy(deep=True)
+            X[self._features_bool] = X[self._features_bool].astype("category")
+
+        return X
+
+    def get_device(self) -> str:
+        return self.model.device_.type
+
+    def _set_device(self, device: str):
+        device = self.to_torch_device(device)
+        self.model.device_ = device
+        self.model.model_ = self.model.model_.to(device)
+
+    def _set_default_params(self):
+        default_params = dict(
+            random_state=0,
+        )
+        for param, val in default_params.items():
+            self._set_default_param_value(param, val)
+
+    def _get_default_stopping_metric(self):
+        return self.eval_metric
+
+    @classmethod
+    def _estimate_memory_usage_static(
+        cls,
+        *,
+        X: pd.DataFrame,
+        hyperparameters: dict | None = None,
+        num_classes: int | None = 1,
+        **kwargs,
+    ) -> int:
+        """Heuristic estimate of the peak tensor footprint of a TabM fit.
+
+        Covers parameters + optimizer state + forward/backward activations. On GPU fits
+        these tensors live in VRAM, so benchmark runs pair this estimate with a VRAM-sized
+        memory budget (``fake_memory_for_estimates``) to cap parallel bagging folds by VRAM.
+        """
+        if num_classes is None:
+            num_classes = 1
+        if hyperparameters is None:
+            hyperparameters = {}
+
+        cat_sizes = []
+        for col in X.select_dtypes(include=["category", "object"]):
+            if isinstance(X[col], pd.CategoricalDtype):
+                # Use .cat.codes for category dtype
+                unique_codes = X[col].cat.codes.unique()
+            else:
+                # For object dtype, treat unique strings as codes
+                unique_codes = X[col].astype("category").cat.codes.unique()
+            cat_sizes.append(len(unique_codes))
+
+        n_numerical = len(X.select_dtypes(include=["number"]).columns)
+
+        return cls._estimate_tabm_ram(
+            hyperparameters=hyperparameters,
+            n_numerical=n_numerical,
+            cat_sizes=cat_sizes,
+            n_classes=num_classes,
+            n_samples=len(X),
+        )
+
+    def _validate_fit_memory_usage(self, mem_error_threshold: float = 0.98, **kwargs):
+        # Given the good mem estimates with overhead, we set the threshold to 1.
+        return super()._validate_fit_memory_usage(mem_error_threshold=mem_error_threshold, **kwargs)
+
+    @classmethod
+    def _estimate_tabm_ram(
+        cls,
+        hyperparameters: dict,
+        n_numerical: int,
+        cat_sizes: list[int],
+        n_classes: int,
+        n_samples: int,
+    ) -> int:
+        num_emb_n_bins = hyperparameters.get("num_emb_n_bins", 48)
+        d_embedding = hyperparameters.get("d_embedding", 16)
+        d_block = hyperparameters.get("d_block", 512)
+        # not completely sure if this is hidden blocks or all blocks, taking the safe option below
+        n_blocks = hyperparameters.get("n_blocks", "auto")
+        if isinstance(n_blocks, str) and n_blocks == "auto":
+            n_blocks = 3
+        batch_size = hyperparameters.get("batch_size", "auto")
+        if isinstance(batch_size, str) and batch_size == "auto":
+            batch_size = get_tabm_auto_batch_size(n_samples=n_samples, n_features=n_numerical + len(cat_sizes))
+        tabm_k = hyperparameters.get("tabm_k", 32)
+        predict_batch_size = hyperparameters.get("eval_batch_size", "auto")
+        if predict_batch_size == "auto":
+            # matches TabMImplementation's "auto" resolution (eval batch = train batch)
+            predict_batch_size = batch_size
+        # not completely sure
+        n_params_num_emb = n_numerical * (num_emb_n_bins + 1) * d_embedding
+        n_params_mlp = (
+            (n_numerical + sum(cat_sizes)) * d_embedding * (d_block + tabm_k)
+            + (n_blocks - 1) * d_block**2
+            + n_blocks * d_block
+            + d_block * (1 + max(1, n_classes))
+        )
+        # 4 bytes per float, up to 5 copies of parameters (1 standard, 1 .grad, 2 adam, 1 best_epoch)
+        mem_params = 4 * 5 * (n_params_num_emb + n_params_mlp)
+
+        # compute number of floats in forward pass (per batch element and ensemble member)
+        # The piecewise-linear encoding materializes several (n_features, n_bins)-wide
+        # intermediates at once (rtdl_num_embeddings builds it via slice + cat, and autograd
+        # keeps copies for backward), hence 4x the single-copy bins term — calibrated on the
+        # observed ~12.2 GiB peak VRAM of a pwl config (n_bins=127, d_block=496, batch=512,
+        # k=32, 169 numerical features).
+        n_floats_forward = n_numerical * (4 * num_emb_n_bins + d_embedding)
+        # before and after scale
+        n_floats_forward += 2 * (sum(cat_sizes) + n_numerical * d_embedding)
+        # 2 for pre-act, post-act
+        n_floats_forward += n_blocks * 2 * d_block + 2 * max(1, n_classes)
+        # training runs forward+backward at the full train batch size; eval is no_grad at
+        # predict_batch_size, so the train side dominates unless eval_batch_size is larger
+        mem_forward_backward = 4 * max(batch_size, predict_batch_size) * n_floats_forward * tabm_k
+
+        mem_ds = n_samples * (4 * n_numerical + 8 * len(cat_sizes))
+
+        # some safety constants and offsets (the 5 is probably excessive)
+        res = 4 * mem_ds + 1.2 * mem_forward_backward + 1.2 * mem_params + 0.3 * (1024**3)
+        # Safety overhead
+        res = res + (5 * 1e9)
+
+        if (n_numerical + len(cat_sizes)) > 8_000:
+            res = res * 1.5
+
+        logger.log(
+            40,
+            f"\tEstimated memory usage {res / 1e9:4}.",
+        )
+        return res
+
+    @classmethod
+    def _class_tags(cls):
+        return {"reset_torch_threads": True}
+
+    def _more_tags(self) -> dict:
+        # TODO: Need to add train params support, track best epoch
+        #  How to force stopping at a specific epoch?
+        return {"can_refit_full": False}

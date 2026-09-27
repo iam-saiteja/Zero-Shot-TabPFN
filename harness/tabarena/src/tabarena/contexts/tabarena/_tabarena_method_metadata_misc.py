@@ -1,0 +1,36 @@
+from __future__ import annotations
+
+from tabarena.models._method_metadata import MethodMetadata
+
+# LightGBM w/ custom preprocessing pipeline (only first 3 repeats)
+# s3 cache = "cache_aio"
+gbm_aio_0808_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="LightGBM_aio_0808",
+    suite="LightGBM_aio_0808",
+    method_type="config",
+    compute="cpu",
+    date="2025-08-08",
+    date_introduced="2016-09",  # LightGBM (preprocessing ablation)
+    ag_key="GBM",
+    model_key="GBM_aio_0808",
+    config_default="LightGBM_aio_0808_c1_BAG_L1",
+    is_bag=True,
+    prefix="cache_aio",
+    verified=False,
+)
+
+# LightGBM w/ custom preprocessing pipeline (only first 3 repeats)
+# s3 cache = "cache_aio"
+prep_gbm_v6_metadata = MethodMetadata.tabarena_legacy_s3(
+    method="prep_LightGBM_v6",
+    suite="prep_LightGBM_v6",
+    method_type="config",
+    compute="cpu",
+    date="2025-12-16",
+    date_introduced="2016-09",  # LightGBM (preprocessing ablation)
+    ag_key="prep_GBM",
+    model_key="prep_GBM_v6",
+    config_default="prep_LightGBM_v6_c1_BAG_L1",
+    is_bag=True,
+    prefix="cache_aio",
+)

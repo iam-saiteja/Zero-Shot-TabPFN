@@ -1,0 +1,198 @@
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+import numpy as np
+from autogluon.common.utils.pandas_utils import get_approximate_df_mem_usage
+from autogluon.common.utils.resource_utils import ResourceManager
+from autogluon.features.generators import LabelEncoderFeatureGenerator
+from autogluon.tabular.models.abstract.abstract_torch_model import AbstractTorchModel
+
+if TYPE_CHECKING:
+    import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+
+class NoriModel(AbstractTorchModel):
+    """Nori: a tabular foundation model for regression via in-context learning.
+
+    Paper/citation: Synthefy Nori
+    Authors: Synthefy (Li Po-han, Aditya Narayanan, Sai Shankar Narasimhan, et al.)
+    Codebase: https://github.com/Synthefy/synthefy-nori
+    License: Apache-2.0
+
+    Notes:
+        - ``NoriRegressor`` is a scikit-learn estimator (``fit``/``predict``) and
+          normalizes the target internally, so we pass ``y`` through unchanged and
+          rely on the default regression ``_predict_proba`` path.
+        - ``NoriRegressor.fit`` coerces ``X`` to a float32 array, so categoricals are
+          label-encoded here. NaN is forwarded as-is: Nori's inference pipeline
+          handles missing values natively (``allow-nan``).
+        - ``NoriRegressor`` exposes no random seed (inference is deterministic given
+          the context), so ``seed_name`` is left unset.
+    """
+
+    ag_key = "TA-NORI"
+    ag_name = "TA-Nori"
+    ag_priority = 65
+    _supported_problem_types = ["regression"]
+    default_num_gpus = 1
+    default_resources_physical_cores_only = True
+    minimum_num_gpus = 1
+    # Cap context size at 100k rows; no feature or class limits (regression-only).
+    _default_auxiliary_params_extra = {
+        "max_rows": 100_000,
+    }
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._feature_generator: LabelEncoderFeatureGenerator | None = None
+        self._cat_indices: list[int] | None = None
+
+    def _preprocess(self, X: pd.DataFrame, *, is_train: bool = False, **kwargs) -> np.ndarray:
+        """Label-encode categoricals to numeric and return a float32 array.
+
+        NaN is preserved (Nori handles missing values natively); only categorical
+        columns are encoded, numeric columns pass through untouched.
+        """
+        X = super()._preprocess(X, **kwargs)
+
+        if is_train:
+            self._feature_generator = LabelEncoderFeatureGenerator(verbosity=0)
+            self._feature_generator.fit(X=X)
+
+        if self._feature_generator.features_in:
+            X = X.copy()
+            X[self._feature_generator.features_in] = self._feature_generator.transform(X=X)
+            if is_train:
+                self._cat_indices = [X.columns.get_loc(c) for c in self._feature_generator.features_in]
+
+        return np.asarray(X.to_numpy(), dtype=np.float32)
+
+    def _fit(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        num_gpus: int = 0,
+        **kwargs,
+    ):
+        import torch
+        from synthefy_nori import NoriRegressor
+
+        if self.problem_type != "regression":
+            raise AssertionError(f"{self.ag_name} only supports regression, got problem_type={self.problem_type!r}.")
+
+        available_num_gpus = ResourceManager.get_gpu_count_torch(cuda_only=True)
+        if num_gpus > available_num_gpus:
+            raise AssertionError(
+                f"Fit specified to use {num_gpus} GPU, but only {available_num_gpus} "
+                "CUDA GPUs are available. Please activate CUDA or switch to CPU usage.",
+            )
+        device = "cuda" if num_gpus != 0 else "cpu"
+        if device == "cuda" and not torch.cuda.is_available():
+            raise AssertionError(
+                "Fit specified to use GPU, but CUDA is not available on this machine. "
+                "Please switch to CPU usage instead.",
+            )
+
+        X = self.preprocess(X, y=y, is_train=True)
+
+        hps = self._get_model_params()
+        hps.pop("device", None)  # device is set explicitly from the allocated resources
+
+        # NoriRegressor normalizes y internally and denormalizes its predictions, so
+        # we pass y through unchanged (it is coerced to float64 inside fit).
+        self.model = NoriRegressor(device=device, **hps)
+        self.model.fit(X, y)
+
+    def _set_default_params(self):
+        default_params = {}
+        for param, val in default_params.items():
+            self._set_default_param_value(param, val)
+
+    # --- Resource and GPU management ---
+    def get_device(self) -> str:
+        device = self.model.device
+        if device is None:
+            return "cpu"
+        return device if isinstance(device, str) else device.type
+
+    def _set_device(self, device: str):
+        import torch
+
+        torch_device = torch.device(device)
+        self.model.device = torch_device
+        # The predictor (and its torch module) are built lazily on the first predict
+        # call; move them only if they already exist.
+        predictor = getattr(self.model, "_predictor", None)
+        if predictor is not None:
+            predictor.device = torch_device
+            if getattr(predictor, "model", None) is not None:
+                predictor.model.to(torch_device)
+
+    @classmethod
+    def _get_default_ag_args_ensemble(cls, **kwargs) -> dict:
+        """Fit one fold at a time (avoids contention on the shared checkpoint cache) and
+        refit by default (a single forward-pass model has no per-fold validation cost).
+        """
+        default_ag_args_ensemble = super()._get_default_ag_args_ensemble(**kwargs)
+        default_ag_args_ensemble.update(
+            {
+                "fold_fitting_strategy": "sequential_local",
+                "refit_folds": default_ag_args_ensemble.pop("refit_folds", True),
+            },
+        )
+        return default_ag_args_ensemble
+
+    @classmethod
+    def _estimate_memory_usage_static(cls, *, X: pd.DataFrame, **kwargs) -> int:
+        """Assume a small-model baseline (weights + activations) plus the dataset footprint."""
+        baseline_mem_est = 3 * 1e9  # 3 GB for the model + activations
+        dataset_mem_est = 5 * get_approximate_df_mem_usage(X).sum()
+        return int(baseline_mem_est + dataset_mem_est)
+
+    def _more_tags(self) -> dict:
+        return {"can_refit_full": True}
+
+    @classmethod
+    def prefetch_weights(cls) -> None:
+        """Pre-download the default Nori checkpoint from the Hugging Face Hub.
+
+        Used by the foundation-model pre-download scripts to warm the cache before
+        parallel fit runs. The Hub repo is gated, so this requires a Hugging Face
+        token (``HF_TOKEN`` / ``hf auth login``).
+        """
+        from synthefy_nori.hf import download_checkpoint
+
+        download_checkpoint()
+
+
+class Nori30MModel(NoriModel):
+    """Nori-30M: the ~29M-parameter version of Nori (in-context tabular regression).
+
+    A version of :class:`NoriModel` — same fit/predict/preprocessing/resource logic, only the
+    checkpoint differs. The ``model="nori-30m"`` default (set below) routes ``NoriRegressor`` to the
+    30M weights via ``synthefy-nori``'s variant registry (``>=0.10.0``), which resolves to the public
+    `Synthefy/Nori-30M <https://huggingface.co/Synthefy/Nori-30M>`_ Hugging Face repo.
+    """
+
+    ag_key = "TA-NORI-30M"
+    ag_name = "TA-Nori-30M"
+    ag_priority = 64  # just below the base Nori (65)
+
+    def _set_default_params(self):
+        super()._set_default_params()
+        # Route NoriRegressor(model=...) to the 30M variant (synthefy-nori >= 0.10.0).
+        self._set_default_param_value("model", "nori-30m")
+
+    @classmethod
+    def prefetch_weights(cls) -> None:
+        """Pre-download the Nori-30M checkpoint (``Synthefy/Nori-30M``) from the Hugging Face Hub.
+
+        Warms the cache before parallel fit runs. The repo is public, so no token is required.
+        """
+        from synthefy_nori.hf import download_checkpoint
+
+        download_checkpoint(model="nori-30m")
