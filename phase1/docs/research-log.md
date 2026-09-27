@@ -318,3 +318,27 @@ inflated or trivial.
 weights, tiny config, anchor-only (no near-field yet). Details and honest
 scope: `experiments/h2-barnes-hut-tabiclv2/analysis.md`. Next: run this
 same patch against TabICLv2's real pretrained checkpoint.
+
+## 2026-09-27 — Real checkpoint result: anchor-only insufficient, near-field is mixed
+
+Ran the tf_icl patch against TabICLv2's actual pretrained checkpoint (real
+weights, real OpenML data, single dataset/split - exploratory, not H1-level
+rigor yet). Anchor-only prediction agreement with exact attention: 80-94%
+across M=16-128, worse than H1's TabPFN v1 numbers - confirms near-field
+expansion is necessary, not optional, at this model's scale/depth (12 ICL
+blocks vs whatever H1 used on TabPFN v1).
+
+Implemented near-field expansion (`patch_nearfield.py`, mask-based, still
+O(train_size) per query - correctness check, not a speed win yet, same
+honest sequencing as H1). Result is genuinely mixed: prediction agreement
+improves substantially (82-84% -> 92-93%), but the raw softmax-fidelity
+metric barely moves and is sometimes marginally worse. Recorded both
+numbers rather than reporting only the one that looks good - see
+`experiments/h2-barnes-hut-tabiclv2/analysis.md` for the full table and
+three candidate (unconfirmed) explanations for the disagreement.
+
+**Not yet done, in order:** multi-seed/multi-dataset repeat of this at
+H1's rigor before trusting these numbers further; investigate the
+fidelity-vs-agreement disagreement; a real sparse kernel (this near-field
+version still doesn't save compute, only proves correctness); real
+TabArena numbers via `harness/`.

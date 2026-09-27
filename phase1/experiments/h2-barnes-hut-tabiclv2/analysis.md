@@ -33,13 +33,57 @@ weights. Also only implements the coreset-anchor half of Barnes-Hut (see
 which a single shared k/v tensor can't express) and is the next real step,
 not yet built.
 
+## Update: real checkpoint + near-field expansion (`real_checkpoint_check*.py`)
+
+Real pretrained TabICLv2 (`tabicl-classifier-v2-20260212.ckpt`, 12 ICL
+blocks, embed_dim 128), real data (OpenML phoneme, same dataset H1 used),
+600 train / 200 test rows. Still bypasses the sklearn cache path (direct
+`_train_forward` call) and still a single dataset/split, no seed averaging
+— exploratory, not confirmatory like H1.
+
+**Anchor-only is clearly insufficient here** — worse than H1's TabPFN v1
+numbers:
+
+| M | pred-agreement with exact |
+|---|---|
+| 16 | 0.805 |
+| 32 | 0.820-0.825 |
+| 64 | 0.835-0.840 |
+| 128 | 0.940 |
+
+**Near-field expansion (`patch_nearfield.py`, mask-based, not yet a fast
+kernel) helps prediction agreement, but not the raw fidelity metric — a
+genuinely mixed result, not spun either way:**
+
+| Variant | fidelity (mean abs softmax diff) | pred-agreement |
+|---|---|---|
+| anchor-only, M=32 | 0.149 | 0.825 |
+| barnes-hut, M=32, t=2/4/8 | 0.157 / 0.145 / 0.148 | 0.920 / 0.930 / 0.925 |
+| anchor-only, M=64 | 0.127 | 0.840 |
+| barnes-hut, M=64, t=2/4/8 | 0.164 / 0.150 / 0.152 | 0.895 / 0.925 / 0.930 |
+
+Near-field pushes prediction agreement up ~9-10 points (82-84% -> 92-93%)
+but the softmax-fidelity number barely moves and is sometimes marginally
+worse. Two metrics disagreeing like this means something real is going on
+that isn't understood yet — possibilities, not conclusions: (a) fidelity
+(mean abs diff over the whole softmax vector) may be dominated by small
+shifts in low-probability classes that don't flip any decision, while
+agreement (argmax) captures what actually matters for accuracy; (b) 12
+independently-reclustered layers may compound noise differently than H1's
+setup; (c) single dataset/split — could just be this dataset. Not resolved,
+flagged honestly rather than picking whichever metric looks better.
+
+**t doesn't monotonically help** (t=2 worse than t=4 at both M) — plausibly
+single-run noise given no seed averaging yet, not a claim either way.
+
 ## Next steps, in order
 
-1. Load TabICLv2's actual pretrained checkpoint (not random init) and rerun
-   this same patch — first real signal on whether it holds on trained
-   weights, still without touching real data.
-2. Extend `patch.py` with the near-field exact-expansion half via
-   `attn_mask`, matching what H1 actually validated (not just the anchor
-   half).
-3. Only then: real datasets, via `harness/` for genuine cached TabArena
+1. **Not done:** repeat with H1's rigor — multiple seeds, multiple datasets
+   — before trusting any of the numbers above as more than a first look.
+2. Investigate the fidelity-vs-agreement disagreement rather than pick the
+   metric that looks better.
+3. A real sparse/gather kernel — this near-field version still computes
+   scores over all `train_size` rows and masks, so it does not yet save
+   compute, only tests correctness.
+4. Only then: real datasets via `harness/` for genuine cached TabArena
    comparisons instead of another custom pilot script.
