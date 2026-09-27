@@ -1,0 +1,88 @@
+method,elo,elo+,elo-
+TABFM (default),1576.0,199.8,79.1
+TabFM+,1536.2,204.6,92.7
+"TabICLv2 (ours, vanilla)",1482.9,403.4,230.9
+[New] TA-ZSTABFM (default),1458.1,216.9,116.2
+"AutoGluon 1.6 (noncommercial, 4h)",1392.3,140.9,61.9
+"AutoGluon 1.6 (extreme, 4h)",1378.7,130.0,69.4
+TA-EXAONE-TABULAR (default),1365.6,133.4,92.4
+TA-TABPFN-3 (default),1306.3,141.8,81.7
+REALTABPFN-V2.5 (default),1288.5,115.3,69.2
+TABICLV2 (default),1284.4,150.2,101.8
+TabICLv2+barnes-hut (ours),1230.6,228.2,192.0
+TABPFN-V2.6 (default),1228.0,149.0,97.1
+"AutoGluon 1.5 (extreme, 4h)",1220.9,136.2,92.2
+REALTABPFN-V2.5 (tuned + ensemble),1220.4,153.1,110.6
+REALTABPFN-V2.5 (tuned),1217.4,146.0,111.3
+TA-LIMIX (default),1180.2,110.6,79.4
+REALMLP_GPU (tuned + ensemble),1165.4,100.6,80.1
+TABDPT_TURBO (default),1151.3,160.6,104.5
+MITRA_GPU (default),1141.5,93.3,66.8
+TABDPT_GPU (tuned + ensemble),1137.6,110.7,84.7
+TABPFNV2_GPU (tuned + ensemble),1130.1,104.2,103.4
+TABDPT_GPU (tuned),1123.6,135.3,103.4
+"AutoGluon 1.4 (best, 4h)",1122.7,92.7,71.5
+TABPFNV2_GPU (default),1114.1,125.3,106.9
+REALMLP_GPU (tuned),1107.7,100.9,115.1
+TABICL_GPU (default),1107.3,129.9,94.1
+TA-TABM (tuned + ensemble),1084.7,100.9,119.8
+TABDPT_GPU (default),1083.8,150.9,115.4
+CAT (tuned),1079.3,119.6,94.9
+TA-TABM (tuned),1078.0,102.1,114.3
+TA-TABSWIFT (default),1068.6,139.7,93.6
+TABPFNV2_GPU (tuned),1061.2,96.6,86.3
+CAT (tuned + ensemble),1054.3,105.1,93.5
+EBM (tuned + ensemble),1053.5,115.0,102.0
+REALMLP_GPU (default),1047.0,114.0,109.2
+SAP-RPT-OSS (default),1036.1,155.8,186.8
+BETA_GPU (default),1026.1,115.9,116.0
+TA-ILTM (tuned + ensemble),1022.9,103.6,93.0
+XRFM_GPU (tuned + ensemble),1022.9,110.2,86.6
+EBM (default),1021.7,120.4,107.8
+CAT (default),1012.1,93.3,89.0
+TA-ILTM (tuned),1004.1,87.6,98.1
+XRFM_GPU (tuned),994.1,119.7,93.2
+MNCA_GPU (tuned),994.1,134.2,117.8
+TA-TABM (default),992.9,126.2,145.9
+GBM (tuned + ensemble),991.7,77.1,59.8
+FASTAI (tuned + ensemble),982.6,123.2,122.7
+EBM (tuned),968.6,108.3,110.9
+XGB (tuned + ensemble),966.7,91.2,87.2
+XGB (tuned),959.1,89.7,101.2
+NN_TORCH (tuned + ensemble),941.4,84.8,90.7
+CHIMERA (tuned + ensemble),938.6,77.0,100.3
+MNCA_GPU (default),933.8,114.3,118.0
+NN_TORCH (tuned),933.4,115.7,124.3
+GBM (tuned),931.4,88.8,76.8
+TABSTAR (tuned),920.4,151.6,181.2
+TABSTAR (tuned + ensemble),914.3,158.6,189.5
+XT (tuned + ensemble),911.1,91.7,103.8
+CHIMERA (tuned),908.6,74.6,112.6
+MNCA_GPU (tuned + ensemble),902.9,101.9,129.9
+FASTAI (tuned),895.0,144.6,142.2
+TA-ORION-MSP (default),894.6,98.3,114.8
+XT (tuned),893.4,89.3,102.2
+TABFLEX_GPU (default),888.4,119.8,122.6
+CHIMERA (default),880.9,123.6,135.6
+PB (tuned + ensemble),875.9,126.9,167.6
+TABSTAR (default),830.0,189.8,231.5
+RF (tuned + ensemble),812.9,104.8,142.4
+PB (default),810.6,125.6,162.5
+NN_TORCH (default),806.5,97.4,112.1
+PB (tuned),806.0,106.7,147.1
+RF (tuned),793.5,89.1,123.9
+TA-ILTM (default),784.9,130.3,183.0
+XRFM_GPU (default),778.2,116.5,167.8
+LR (tuned + ensemble),775.3,133.0,160.5
+XGB (default),763.5,65.5,123.9
+LR (tuned),750.9,144.1,167.3
+KNN (tuned + ensemble),734.7,77.7,136.9
+FASTAI (default),730.5,112.2,152.4
+XT (default),717.5,98.4,123.1
+TA-NORI (default),687.8,79.4,129.5
+RF (default),687.8,79.4,129.5
+TA-NORI-30M (default),687.8,79.4,129.5
+LR (default),687.8,125.5,184.1
+GBM (default),674.6,51.1,112.1
+KNN (tuned),516.1,95.1,211.6
+KNN (default),325.0,110.9,320.1

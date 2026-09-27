@@ -439,3 +439,28 @@ increase), the expected shape for an approximation. Full detail:
 
 **This is now trustworthy enough to compute a real Elo number against the
 official cached leaderboard - the next step, not yet done.**
+
+## 2026-09-27 — Computed a real Elo number via bencheval; flagged it as not trustworthy yet
+
+Merged our real-API results with the genuine cached official baselines for
+13 real TabArena-tiny datasets and ran the actual `bencheval` Elo computation
+(not a hand-rolled metric) - a real infrastructure milestone.
+
+**Caught before reporting it as a result:** our own vanilla TabICLv2 run
+scored ~200 Elo above the official cached run of the identical model
+(1482.9 vs 1284.4), with 95% CIs that barely overlap. Same red-flag category
+as the MIC outlier earlier - two things that should agree don't. Root cause:
+13 single-split tasks vs TabArena's real 51-task/30-split protocol gives
+enormous Elo variance (CI widths 200-400 here vs 100-150 for methods with
+the real protocol's sample behind them) - not a computation bug, an expected
+consequence of the tiny sample.
+
+**Decision: infrastructure is real and works; the specific number (our
+vanilla ranks 3rd/87) is not reported as a result** - would repeat the
+overclaiming pattern this project has tried to avoid throughout. Full
+writeup: `experiments/h2-barnes-hut-tabiclv2/results/elo_readme.md`.
+
+**What a trustworthy number needs:** the real 51-task suite with something
+closer to the actual 30-split protocol - an order-of-magnitude bigger
+compute commitment than this session's work, flagged as a decision point
+rather than started automatically.
