@@ -533,3 +533,15 @@ unlike Barnes-Hut which trades accuracy for it. If chunking alone pushes
 the practical ceiling past 400k, that's a bigger, safer, easier win than
 finishing the sparse Barnes-Hut kernel - and Barnes-Hut would then only be
 needed for whatever gap remains beyond what chunking alone can reach.
+
+## 2026-09-28 (overnight, autonomous) — Chunked exact attention: real bug found and fixed
+
+First implementation of `chunked_exact.py` only chunked the key/value
+dimension, not the query dimension - left an `(all T queries) x (key
+chunk)` intermediate score tensor, which at N=200k with chunk_size=16384
+tried to allocate 97.69 GiB (crashed immediately, caught before it was
+mistaken for a fundamental limitation). Fixed with proper nested chunking
+(query blocks x key/value blocks - the actual FlashAttention structure).
+Re-verified: matches plain exact attention within 2.7e-5 (still genuinely
+exact, zero accuracy cost). Real memory/speed benchmark at scale (200k-1.5M
+rows, small bounded chunk sizes) launched, not yet complete.
