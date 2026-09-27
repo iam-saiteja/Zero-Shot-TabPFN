@@ -545,3 +545,23 @@ mistaken for a fundamental limitation). Fixed with proper nested chunking
 Re-verified: matches plain exact attention within 2.7e-5 (still genuinely
 exact, zero accuracy cost). Real memory/speed benchmark at scale (200k-1.5M
 rows, small bounded chunk sizes) launched, not yet complete.
+
+## 2026-09-28 (overnight, autonomous) — Investigated the 2 anchor-only-wins exceptions: genuinely unexplained
+
+Checked two candidate explanations for why anchor-only beat Barnes-Hut on
+Fitness_Club and MIC (both times this comparison has been run): low feature
+count causing degenerate k-means clustering, and severe class imbalance.
+Both refuted by direct counterexample: phoneme (a clear Barnes-Hut win) has
+*fewer* features (5) than Fitness_Club (6) and nearly identical class
+balance (70.7/29.3 vs 69.7/30.3) - if either theory were right, phoneme
+should behave like Fitness_Club, not oppositely.
+
+**Not resolved.** Logged honestly as a genuine open question rather than
+forcing an explanation that doesn't survive its own counterexample. One
+partial, unconfirmed observation worth keeping in mind: on Fitness_Club,
+anchor-only's AUC (0.817) is actually *better* than exact attention's own
+(0.648) - i.e. the "approximation" isn't just noisier, it's doing
+something exact attention itself doesn't do well on this dataset. Whether
+that's a real regularization effect or a one-off artifact of a single
+train/test split isn't known - would need repeated splits to check, not
+done tonight.
