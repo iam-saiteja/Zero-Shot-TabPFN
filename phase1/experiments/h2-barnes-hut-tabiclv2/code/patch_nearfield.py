@@ -57,8 +57,14 @@ def _patched_forward(self: Encoder, src: torch.Tensor, train_size=None, *, M: in
         far_mask = ~is_top  # (B,T,M)
         keep = torch.cat([near_mask, far_mask], dim=-1)  # (B,T,train_size+M)
 
+        # log(count) bias on the monopole entries: an unpicked cluster of n real rows must count as
+        # n rows' worth of softmax mass, not 1 - matching the monopole design already validated in
+        # research/sim_anchor_attention.py (bare boolean masking, tried first, left the mass
+        # undercounted - this is the fix, not the original design).
+        bias = torch.zeros(B, T, train_size + M, device=out.device, dtype=out.dtype)
+        bias[:, :, train_size:] = log_counts.unsqueeze(1)
         nheads = block.attn.num_heads
-        attn_mask = torch.zeros(B, nheads, T, train_size + M, device=out.device, dtype=out.dtype)
+        attn_mask = bias.unsqueeze(1).expand(B, nheads, T, train_size + M).clone()
         attn_mask.masked_fill_(~keep.unsqueeze(1), float('-inf'))
         out = block(q=out, k=combined, v=combined, train_size=None, rope=self.rope, attn_mask=attn_mask)
     return out

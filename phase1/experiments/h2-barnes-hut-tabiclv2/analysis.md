@@ -76,6 +76,37 @@ flagged honestly rather than picking whichever metric looks better.
 **t doesn't monotonically help** (t=2 worse than t=4 at both M) — plausibly
 single-run noise given no seed averaging yet, not a claim either way.
 
+### Found and fixed the cause: monopole entries were undercounted
+
+Root cause of the fidelity/agreement disagreement above: `log_counts` (how
+many real rows each cluster summarizes) was only used to pick which
+clusters get exact near-field treatment (the `topk` call) — it was never
+actually added as a bias to the real attention logits for the surviving
+monopole entries. So a cluster standing in for 50 real rows was attended to
+with the same softmax weight as a single row: systematically wrong
+probability mass, explaining why fidelity didn't move while argmax
+agreement (which survives even with wrong relative mass, as long as the
+biggest class stays biggest) did. Fixed by adding `log(count)` as an
+additive bias on the monopole positions in `attn_mask` (matching the design
+already validated as the right one in `research/sim_anchor_attention.py`'s
+"monopole" variant — this was an implementation gap, not a design error).
+
+**After the fix, same setup as above:**
+
+| Variant | fidelity | pred-agreement |
+|---|---|---|
+| anchor-only, M=32 | 0.171 | 0.830 |
+| barnes-hut, M=32, t=2/4/8 | 0.064 / 0.045 / 0.034 | 0.935 / 0.970 / 0.960 |
+| anchor-only, M=64 | 0.134 | 0.840 |
+| barnes-hut, M=64, t=2/4/8 | 0.055 / 0.049 / 0.025 | 0.940 / 0.960 / 0.965 |
+
+Both metrics now agree and move together: fidelity drops 3-6x versus
+anchor-only (into the same 0.02-0.06 range H1 measured on real TabPFN v1
+data), and it's now roughly monotonic in `t` (M=64: 0.055 -> 0.049 -> 0.025
+as t=2 -> 4 -> 8), which is what theory predicts and the pre-fix numbers
+did not show. This is a real, mechanistically-understood result, not a
+metric-picking exercise.
+
 ## Next steps, in order
 
 1. **Not done:** repeat with H1's rigor — multiple seeds, multiple datasets

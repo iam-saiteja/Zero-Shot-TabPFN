@@ -342,3 +342,23 @@ H1's rigor before trusting these numbers further; investigate the
 fidelity-vs-agreement disagreement; a real sparse kernel (this near-field
 version still doesn't save compute, only proves correctness); real
 TabArena numbers via `harness/`.
+
+## 2026-09-27 — Found and fixed the cause of the mixed near-field result
+
+Investigated the fidelity-vs-agreement disagreement from the previous entry
+(the disciplined next step, before scaling up to more seeds/datasets on a
+possibly-broken measurement). Root cause: `log_counts` (real rows per
+cluster) was only used to pick which clusters get exact near-field
+treatment, never added as an attention-logit bias for the surviving
+monopole entries - so a cluster standing in for 50 rows got the same
+softmax weight as 1 row. Fixed in `patch_nearfield.py`.
+
+**After the fix:** fidelity drops 3-6x vs anchor-only (into H1's 0.02-0.06
+range on real TabPFN v1 data), now roughly monotonic in `t` as theory
+predicts, and both metrics (fidelity, prediction agreement) move together
+instead of disagreeing. Full before/after table in
+`experiments/h2-barnes-hut-tabiclv2/analysis.md`.
+
+**Still not done, unchanged from before:** multi-seed/multi-dataset repeat
+at H1's rigor, a real sparse kernel (still O(train_size) per query, masked
+not gathered), and real TabArena numbers via `harness/`.
