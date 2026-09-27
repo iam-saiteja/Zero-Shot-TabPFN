@@ -1,0 +1,15 @@
+13 classification datasets: ['Fitness_Club', 'Is-this-a-good-customer', 'MIC', 'Marketing_Campaign', 'anneal', 'blood-transfusion-service-center', 'credit-g', 'diabetes', 'hazelnut-spread-contaminant-detection', 'maternal_health_risk', 'qsar-biodeg', 'seismic-bumps', 'website_phishing']
+Fitness_Club binary n_train=1050 {'TabICLv2 (ours, vanilla)': 0.3517, 'TabICLv2+anchor-only (ours)': 0.1825, 'TabICLv2+barnes-hut (ours)': 0.3928}
+SKIP Is-this-a-good-customer: ValueError: could not convert string to float: 'male'
+MIC binary n_train=1154 {'TabICLv2 (ours, vanilla)': 0.0994, 'TabICLv2+anchor-only (ours)': 0.1738, 'TabICLv2+barnes-hut (ours)': 0.1988}
+SKIP Marketing_Campaign: ValueError: could not convert string to float: '2013-01-11'
+anneal multiclass n_train=628 {'TabICLv2 (ours, vanilla)': 0.0163, 'TabICLv2+anchor-only (ours)': 0.1672, 'TabICLv2+barnes-hut (ours)': 0.0198}
+blood-transfusion-service-center binary n_train=523 {'TabICLv2 (ours, vanilla)': 0.2722, 'TabICLv2+anchor-only (ours)': 0.294, 'TabICLv2+barnes-hut (ours)': 0.2579}
+credit-g binary n_train=700 {'TabICLv2 (ours, vanilla)': 0.1904, 'TabICLv2+anchor-only (ours)': 0.2339, 'TabICLv2+barnes-hut (ours)': 0.2043}
+diabetes binary n_train=537 {'TabICLv2 (ours, vanilla)': 0.2116, 'TabICLv2+anchor-only (ours)': 0.2312, 'TabICLv2+barnes-hut (ours)': 0.1966}
+hazelnut-spread-contaminant-detection binary n_train=1680 {'TabICLv2 (ours, vanilla)': 0.0348, 'TabICLv2+anchor-only (ours)': 0.1291, 'TabICLv2+barnes-hut (ours)': 0.0475}
+maternal_health_risk multiclass n_train=709 {'TabICLv2 (ours, vanilla)': 0.5239, 'TabICLv2+anchor-only (ours)': 0.8179, 'TabICLv2+barnes-hut (ours)': 0.5498}
+qsar-biodeg binary n_train=738 {'TabICLv2 (ours, vanilla)': 0.0658, 'TabICLv2+anchor-only (ours)': 0.0851, 'TabICLv2+barnes-hut (ours)': 0.0833}
+seismic-bumps multiclass n_train=147 {'TabICLv2 (ours, vanilla)': 0.3027, 'TabICLv2+anchor-only (ours)': 0.3086, 'TabICLv2+barnes-hut (ours)': 0.2886}
+website_phishing multiclass n_train=947 {'TabICLv2 (ours, vanilla)': 0.2211, 'TabICLv2+anchor-only (ours)': 0.4014, 'TabICLv2+barnes-hut (ours)': 0.2476}
+done 33 rows -> C:\Users\iamsa\Documents\ISAB-r\phase1\experiments\h2-barnes-hut-tabiclv2\code\..\results\tabarena_tiny_new_rows.csv

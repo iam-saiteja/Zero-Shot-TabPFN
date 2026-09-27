@@ -388,3 +388,33 @@ previous entry is exactly what made this consistent). Full table:
 **Still open:** fix the rig to use real preprocessing (kills the NaN
 cases), a real sparse kernel (still no speed win shown), and the actual
 TabArena protocol via `harness/` instead of a custom pilot script.
+
+## 2026-09-27 — Real TabArena-tiny dataset test; stopped short of an Elo number, on purpose
+
+Ran on the actual 13 classification datasets from the real
+`harness/tabarena_tiny_results_reference` (genuine TabArena dataset names,
+not another arbitrary list) - 2 skipped on a data-loading bug (raw string
+columns not caught by dtype detection, not a method issue).
+
+**Internal result (valid):** Barnes-Hut beats anchor-only on 9/11 datasets,
+same pipeline both sides. Real, but not the clean 16/16 the earlier
+`sweep.py` showed - 2 real exceptions (Fitness_Club, MIC), not explained
+away, logged as open.
+
+**Stopped before computing an Elo number, deliberately:** cross-checked our
+own vanilla (exact attention) against the real cached `TABICLV2 (default)`
+baseline for the same datasets - several diverge substantially (MIC: 0.469
+official vs 0.099 ours; Fitness_Club: 0.191 vs 0.352; maternal_health_risk:
+0.354 vs 0.524; seismic-bumps: 0.214 vs 0.303). Our pipeline isn't
+equivalent to real TabICLv2 usage yet: crude preprocessing, `_train_forward`
+instead of the real `forward_with_cache` inference path (the KV-cache gap
+flagged earlier - now confirmed to matter beyond just production realism),
+and an ad hoc split instead of TabArena's real fold protocol. Merging with
+the official cache and computing Elo now would produce a number that looks
+authoritative but rests on a baseline mismatch. Full writeup:
+`experiments/h2-barnes-hut-tabiclv2/results/tabarena_tiny_readme.md`.
+
+**Real remaining gap before an Elo number is trustworthy:** route through
+`TabICLClassifier`'s actual preprocessing + `forward_with_cache`, and match
+TabArena's real fold protocol. Not a quick fix - a real chunk of work,
+flagged for a decision rather than pushed through silently.

@@ -1,0 +1,34 @@
+dataset,fold,method,metric_error,time_train_s,time_infer_s,metric,problem_type
+Fitness_Club,0,"TabICLv2 (ours, vanilla)",0.3516883664293743,1.1656713485717773,1.31095552444458,roc_auc,binary
+Fitness_Club,0,TabICLv2+anchor-only (ours),0.18253559385537654,1.1656713485717773,0.41057538986206055,roc_auc,binary
+Fitness_Club,0,TabICLv2+barnes-hut (ours),0.3927735106781567,1.1656713485717773,0.3339231014251709,roc_auc,binary
+MIC,0,"TabICLv2 (ours, vanilla)",0.09937550487789715,2.7249510288238525,0.280245304107666,roc_auc,binary
+MIC,0,TabICLv2+anchor-only (ours),0.17378673957621316,2.7249510288238525,0.3073537349700928,roc_auc,binary
+MIC,0,TabICLv2+barnes-hut (ours),0.1987976138693841,2.7249510288238525,0.32970523834228516,roc_auc,binary
+anneal,0,"TabICLv2 (ours, vanilla)",0.0162811279296875,1.2389960289001465,0.11092829704284668,log_loss,multiclass
+anneal,0,TabICLv2+anchor-only (ours),0.167236328125,1.2389960289001465,0.17296290397644043,log_loss,multiclass
+anneal,0,TabICLv2+barnes-hut (ours),0.019805908203125,1.2389960289001465,0.18332910537719727,log_loss,multiclass
+blood-transfusion-service-center,0,"TabICLv2 (ours, vanilla)",0.27220056313623564,0.7434630393981934,0.09292912483215332,roc_auc,binary
+blood-transfusion-service-center,0,TabICLv2+anchor-only (ours),0.29402209226770626,0.7434630393981934,0.14148378372192383,roc_auc,binary
+blood-transfusion-service-center,0,TabICLv2+barnes-hut (ours),0.25785141867013206,0.7434630393981934,0.1572585105895996,roc_auc,binary
+credit-g,0,"TabICLv2 (ours, vanilla)",0.19044973544973542,0.9169352054595947,0.09305763244628906,roc_auc,binary
+credit-g,0,TabICLv2+anchor-only (ours),0.23391534391534385,0.9169352054595947,0.13180828094482422,roc_auc,binary
+credit-g,0,TabICLv2+barnes-hut (ours),0.20425925925925925,0.9169352054595947,0.1591320037841797,roc_auc,binary
+diabetes,0,"TabICLv2 (ours, vanilla)",0.2116460905349794,0.8700640201568604,0.09900355339050293,roc_auc,binary
+diabetes,0,TabICLv2+anchor-only (ours),0.23115226337448558,0.8700640201568604,0.15364885330200195,roc_auc,binary
+diabetes,0,TabICLv2+barnes-hut (ours),0.19662551440329212,0.8700640201568604,0.15521979331970215,roc_auc,binary
+hazelnut-spread-contaminant-detection,0,"TabICLv2 (ours, vanilla)",0.034803240740740815,1.0354645252227783,0.1680750846862793,roc_auc,binary
+hazelnut-spread-contaminant-detection,0,TabICLv2+anchor-only (ours),0.12911265432098773,1.0354645252227783,0.19254589080810547,roc_auc,binary
+hazelnut-spread-contaminant-detection,0,TabICLv2+barnes-hut (ours),0.0474768518518518,1.0354645252227783,0.2577197551727295,roc_auc,binary
+maternal_health_risk,0,"TabICLv2 (ours, vanilla)",0.52392578125,0.7385761737823486,0.09136104583740234,log_loss,multiclass
+maternal_health_risk,0,TabICLv2+anchor-only (ours),0.81787109375,0.7385761737823486,0.15178561210632324,log_loss,multiclass
+maternal_health_risk,0,TabICLv2+barnes-hut (ours),0.5498046875,0.7385761737823486,0.1828916072845459,log_loss,multiclass
+qsar-biodeg,0,"TabICLv2 (ours, vanilla)",0.06579884290164661,1.3098652362823486,0.11398124694824219,roc_auc,binary
+qsar-biodeg,0,TabICLv2+anchor-only (ours),0.08511348464619495,1.3098652362823486,0.16718816757202148,roc_auc,binary
+qsar-biodeg,0,TabICLv2+barnes-hut (ours),0.08328882955051176,1.3098652362823486,0.1763443946838379,roc_auc,binary
+seismic-bumps,0,"TabICLv2 (ours, vanilla)",0.302734375,0.6791384220123291,0.09404253959655762,log_loss,multiclass
+seismic-bumps,0,TabICLv2+anchor-only (ours),0.30859375,0.6791384220123291,0.12075328826904297,log_loss,multiclass
+seismic-bumps,0,TabICLv2+barnes-hut (ours),0.28857421875,0.6791384220123291,0.12700629234313965,log_loss,multiclass
+website_phishing,0,"TabICLv2 (ours, vanilla)",0.2210693359375,0.7111384868621826,0.08292937278747559,log_loss,multiclass
+website_phishing,0,TabICLv2+anchor-only (ours),0.4013671875,0.7111384868621826,0.13240623474121094,log_loss,multiclass
+website_phishing,0,TabICLv2+barnes-hut (ours),0.24755859375,0.7111384868621826,0.15700292587280273,log_loss,multiclass
