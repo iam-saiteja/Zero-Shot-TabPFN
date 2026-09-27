@@ -1,0 +1,21 @@
+{
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.egg-info": true,
+    "**/.pytest_cache": true,
+    "**/.ruff_cache": true
+  },
+  "search.exclude": {
+    "phase1/.venv-tabicl": true,
+    "phase1/.venv": true,
+    "phase2/.venv*": true,
+    "**/__pycache__": true,
+    "**/*.egg-info": true
+  },
+  "files.watcherExclude": {
+    "phase1/.venv-tabicl/**": true,
+    "phase1/.venv/**": true,
+    "phase2/.venv*/**": true,
+    "**/__pycache__/**": true
+  }
+}
