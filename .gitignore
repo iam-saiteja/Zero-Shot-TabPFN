@@ -1,13 +1,3 @@
-.venv/
-.venv-tabicl/
-.qodo/
+phase1/.venv-tabicl/
+phase1/.venv/
 __pycache__/
-catboost_info/
-scratch/
-AutogluonModels/
-datasets/
-data/
-paper.zip
-tmlr-style-file-main/
-tabzilla/
-Zero_Shot_ISAB__Refined_Inducing_Point_Attention_for_Tabular_Transformers.zip
