@@ -4,6 +4,28 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-27 — Base model must move off TabPFN v1; TabICLv2 is the port target
+
+User (rightly) flagged that v1 is obsolete. Checked the current field:
+- **TabPFN-3** (53M cls params, 24 layers) already ships row-chunking + multi-query
+  attention: ~7GB KV cache at 1M rows, sub-second inference on one GPU. So "scale to
+  1M rows on one GPU" is no longer an open niche. Weights are research/internal-eval
+  only (no commercial or production use, derivatives included), so it is a poor base
+  for something meant to be released.
+- **TabICLv2** is open including pretraining code, beats RealTabPFN-2.5 on TabArena
+  untuned, but needs ~50GB GPU (with disk offload) at 1M rows, and its dataset-wise ICL
+  stage is O(n²) in rows. Pretraining cost ~24.5 H100-days (Stage 1 alone ~20), so
+  from-scratch pretraining on consumer GPUs is out of reach; fine-tuning/porting is not.
+- Its dataset-wise ICL stage is one token per row, the same structure as v1, so the
+  Barnes–Hut module ports there directly. The consumer-GPU gap (50GB at 1M rows) is a
+  real, open problem.
+
+**Decision:** keep the v1 pilot only as a cheap test of whether embeddings cluster; then
+port the attention module to TabICLv2's dataset-wise stage. Elo caveat stays: an
+approximation cannot exceed exact attention, so this buys speed/memory, not Elo. Elo
+gains would have to come from fine-tuning (open question). Current #1 is ~1935, so 2K+
+is not supported by any evidence found.
+
 ## 2026-09-27 — Structured brainstorm; Barnes–Hut attention chosen as lead idea
 
 Ran the ideation frameworks (`research/ideas.md`). Two facts surfaced: our base
