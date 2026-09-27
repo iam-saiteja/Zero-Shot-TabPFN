@@ -4,6 +4,6 @@ phase: inner-loop
 log: docs/research-log.md
 hypotheses:
   H1: {status: gate-passed, result: "bh median fidelity error 0.43x of isab_kmeans, acc delta -0.33pp vs exact on TabPFN v1", analysis: experiments/h1-barnes-hut-real-activations/analysis.md}
-  H2: {status: next, note: "port BH to TabICLv2 dataset-wise ICL stage (O(n^2) in rows); needs sparse kernel to show real speed/memory win"}
-  H3: {status: parked, note: "fine-tune open TFM on real data for Elo; only route to Elo gains"}
+  H2: {status: in-progress, note: "port BH to TabICLv2 (chosen model, research/model-choice.md) dataset-wise ICL stage (O(n^2) in rows, ~50GB@1M target); needs sparse kernel to show real speed/memory win"}
+  H3: {status: next, note: "fine-tune TabICLv2 (or Mitra fallback) on real data for Elo; only route to Elo gains; unproven"}
 compute: {laptop: "RTX 3050 4GB", optional: ["3090 Ti (colleague)", "Kaggle ~30h/wk"]}

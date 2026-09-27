@@ -4,6 +4,37 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-27 — Repo reorg into legacy/; model choice locked to TabICLv2
+
+User asked for two parallel workstreams (make an open, permissively-licensed
+model consumer-fast; separately try fine-tuning toward a better Elo), and to
+clean the repo: move superseded v1-era material into `legacy/`, verify the
+license before committing to a model (their "major focus"), and push the
+result straight to `main` under their own authorship only (no co-author
+line, per their explicit instruction, overriding the default attribution
+convention for this push).
+
+**License check (`research/model-choice.md`):** LimiX-2 (current #1) and
+TabPFN-3/3.5 are both non-commercial / research-only licensed — excluded.
+TabICLv2 (BSD-3/Apache-2.0) and Mitra (Apache-2.0) are the fully open
+options. **Chosen: TabICLv2** — strongest fully-open model, and it has a
+real unsolved efficiency gap (~50GB GPU at 1M rows) that the validated H1
+attention method should address directly, since its dataset-wise ICL stage
+has the same one-token-per-row structure H1 was tested on. Mitra kept as
+fallback for the fine-tuning track (smaller, already small-table-specialized).
+
+**Repo reorg:** moved `tabarena_submission/`, `benchmarks/`, `paper/`, the
+old paper draft, `tmlr-style-file-main/`, `tabzilla/`, `assets/`,
+`tfm_leaderboard.json`, and the old TabArena-Lite runner scripts into
+`legacy/` (git history preserved via `git mv` where tracked). All of it was
+built around the v1 zsisab claims that can't be re-verified (2026-09-26
+entry). README rewritten to state current status honestly instead of the
+old unverified benchmark table. `zsisab/` stays at the repo root — it's
+still the active pilot testbed H1 depends on.
+
+**Set up `.venv-tabicl`** (via `uv`, per user preference) with `tabicl` +
+torch+cu121 for the port work.
+
 ## 2026-09-27 — Base model must move off TabPFN v1; TabICLv2 is the port target
 
 User (rightly) flagged that v1 is obsolete. Checked the current field:
