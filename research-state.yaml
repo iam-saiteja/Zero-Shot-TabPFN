@@ -1,0 +1,9 @@
+project: zs-isab-tabarena
+question: Can training-free attention approximation (Barnes-Hut style) make tabular foundation models fast at large N without losing accuracy?
+phase: inner-loop
+log: docs/research-log.md   # reuses the existing decision log instead of a root research-log.md
+hypotheses:
+  H1: {status: protocol-locked, protocol: experiments/h1-barnes-hut-real-activations/protocol.md}
+  H2: {status: parked, note: "compression-aware fine-tuning, only if H1 passes gate"}
+  H3: {status: parked, note: "episodic real-data fine-tune of Mitra via TabTune"}
+compute: {laptop: "RTX 3050 4GB", optional: ["3090 Ti (colleague)", "Kaggle ~30h/wk"]}
