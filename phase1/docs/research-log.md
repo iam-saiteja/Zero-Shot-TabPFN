@@ -492,3 +492,44 @@ a win.** A real performance win needs an actual fused kernel (Triton) or a
 restructuring that avoids triggering SDPA's slow custom-mask path entirely
 (e.g. two separate unmasked calls instead of one masked combined call) -
 both real, separate next steps, not done here.
+
+## 2026-09-28 (overnight, autonomous) — Found exact attention's REAL ceiling: paging, not just OOM
+
+Ran `exact_ceiling_check.py` on the real checkpoint (12 ICL blocks, real
+embed/icl dims), pushing `tf_icl`'s plain exact attention from 50k to 1.5M
+rows on this 4GB RTX 3050, to answer: does exact attention actually have a
+nearby problem on this hardware, or was the whole Barnes-Hut effort chasing
+something only relevant at scales this GPU could never reach anyway?
+
+| N | time | peak memory |
+|---|---|---|
+| 50,000 | 39.6s | 1,149 MB |
+| 100,000 | 156.0s | 2,174 MB |
+| 200,000 | 685.3s (~11 min) | 4,221 MB |
+| 400,000 | **8,645s (~2.4 hours)** | 8,318 MB |
+| 700,000 | OOM | - |
+
+**This answers last night's open question decisively: yes, there's a real,
+nearby problem.** Peak memory at N=400k (8.3GB) exceeds the card's physical
+4GB - Windows/CUDA was paging into system RAM rather than cleanly failing,
+which is why time exploded non-linearly (200k->400k is a 2x row increase
+but a ~12.6x time increase, not the ~4x the earlier scaling trend would
+predict). Hard OOM lands at 700k, but the *practical* ceiling - where it
+stops being usable at all - is much lower, somewhere around 200-300k rows.
+
+**This changes the priority call from earlier:** the Barnes-Hut/sparse
+kernel line of work is justified after all - there's a real wall around
+200-400k rows on this exact hardware, not just a theoretical one at
+TabICLv2's own reported 1M-row target.
+
+**Decision (see next entry): pursue a chunked EXACT (not approximate)
+attention first**, before more Barnes-Hut kernel work. Reasoning: the
+failure mode just found is a peak-memory problem, not fundamentally an
+accuracy-vs-compute tradeoff problem - a chunked online-softmax
+accumulator (same technique already validated in `zsisab/engine.py` for
+TabPFN v1, and matching the real "Chunked TabPFN" prior art in
+`research/landscape.md`) can cap peak memory with ZERO accuracy cost,
+unlike Barnes-Hut which trades accuracy for it. If chunking alone pushes
+the practical ceiling past 400k, that's a bigger, safer, easier win than
+finishing the sparse Barnes-Hut kernel - and Barnes-Hut would then only be
+needed for whatever gap remains beyond what chunking alone can reach.
