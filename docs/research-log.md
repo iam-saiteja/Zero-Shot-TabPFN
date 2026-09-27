@@ -4,6 +4,25 @@ One entry per decision, newest first. This is the running record of choices
 made and why — see `docs/research-direction.md` for the overall strategy
 those choices sit inside.
 
+## 2026-09-27 — Structured brainstorm; Barnes–Hut attention chosen as lead idea
+
+Ran the ideation frameworks (`research/ideas.md`). Two facts surfaced: our base
+model is **TabPFN v1** (`tabpfn==0.1.11`), not the v2+/Mitra models on today's
+leaderboard, so any Elo claim needs a port; and TabArena's 3,600s fit budget is
+mostly unused by foundation models.
+
+Ran a synthetic attention-approximation sim (`research/sim_anchor_attention.py`).
+Results (attention-output error, not accuracy): Track A's k-means anchors cut
+error 2–4x vs random anchors (validates the committed change mechanistically);
+log-count mass weighting alone is not a free win; adding exact near-field
+expansion over the top-t clusters per query (Barnes–Hut style) cut error a
+further 5–15x, at ~M + t·N/M rows touched per query.
+
+**Decision:** pilot Barnes–Hut attention on real TabPFN v1 activations (no
+training, laptop, ~1 week) before any fine-tuning track. Kill if real
+activations don't cluster. Mitra episodic fine-tune stays as a parallel cheap
+track. Not yet run on real activations.
+
 ## 2026-09-26 — Found a much cheaper path: fine-tune an existing checkpoint, not train from scratch
 
 User asked about fine-tuning + quantizing an existing model instead of
