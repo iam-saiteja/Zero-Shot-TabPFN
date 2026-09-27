@@ -188,3 +188,70 @@ disaster.
 **This is now a foundation trustworthy enough to compute a real Elo number
 against the official cached leaderboard** — the next concrete step, not yet
 done.
+
+## Sparse kernel attempt: correctness YES, speed/memory win NO (honest negative)
+
+Built `sparse_kernel.py` - a real per-query gather (each query attends only to
+its own top-t clusters' real rows + monopole summaries for the rest), not the
+masked-over-dense approach used everywhere else in this experiment.
+
+**Three real bugs found and fixed while validating it against the
+already-proven dense masked version** (traced via a hooked capture of the
+dense version's actual `attn_mask`/scores, not guessing):
+1. Clustering was done in norm1-normalized space; the validated dense version
+   clusters in raw (pre-norm1) space - had to match it exactly.
+2. Missed `ssmax_layer` (TabICLv2's default query-rescaling module,
+   `icl_ssmax="qassmax-mlp-elementwise"` by default) entirely in the
+   hand-rolled attention math.
+3. **The actual root cause of a 0.47 max-abs-diff failure**: the far-field
+   mask had inverted polarity - `masked_fill(~is_top, ...)` instead of
+   `masked_fill(is_top, ...)`, masking out the wrong clusters. Found by
+   hooking dense's real `attn_mask` and comparing cluster-by-cluster, not by
+   further guessing.
+
+**After all three fixes: max abs diff vs the validated dense version = 1e-6**
+(floating-point noise) when the per-cluster padding capacity (`cap`) is large
+enough that no real neighbor gets silently dropped. With a too-small `cap`,
+some real rows get truncated - a real speed/accuracy tradeoff knob, not a bug
+(the default formula was bumped to be safer, but still worth checking
+per-model).
+
+**Speed/memory benchmark (same hardware as everything else in this project,
+RTX 3050 Laptop GPU, 4GB): the sparse kernel is SLOWER and uses MORE memory
+than both plain exact attention and the dense-masked version, at every scale
+tested (N=1,000 to 40,000), and OOMs earlier than exact attention does.**
+
+| N_train | exact (sec / MB) | dense-masked BH (sec / MB) | sparse-gather BH (sec / MB) |
+|---|---|---|---|
+| 1,000 | 0.009 / 671 | 0.031 / 714 | 0.060 / 850 |
+| 4,000 | 0.025 / 679 | 0.083 / 1,300 | 0.163 / 3,118 |
+| 16,000 | 0.241 / 714 | 14.935 / 10,489 | OOM |
+| 40,000 | 1.541 / 785 | OOM | OOM |
+
+**Root cause, and it's a real, useful finding, not just a failure:** plain
+exact attention here barely grows in memory at all (671->785MB across a 40x
+increase in N) - strong evidence PyTorch's SDPA is already using a
+FlashAttention-style memory-efficient path when no custom float mask is
+given. The moment a custom `attn_mask` tensor is introduced (dense-masked
+BH), SDPA falls back to a much more memory-hungry path - explaining why
+dense-masked BH OOMs at N=16,000 while exact handles N=40,000 fine. My
+hand-written sparse-gather kernel is *unfused* pure-PyTorch (many separate
+gather/einsum ops, each a real kernel launch and intermediate tensor) - its
+asymptotically-smaller FLOP count doesn't translate to a real win because the
+per-op overhead of an unfused implementation outweighs the savings at these
+scales, and the `(B,T,N,d)`-shaped gather source (even as a stride-0
+`.expand()`, not a real copy) still costs real bandwidth.
+
+**Honest conclusion:** this session proved the *approximation itself* is
+mathematically correct (three real bugs found and fixed, final match to
+floating-point precision) but did not deliver the speed/memory win that was
+the actual point of building a sparse kernel. Getting a real win needs a
+genuinely fused kernel (Triton, most realistically) - a separate, substantial
+piece of work, not completed here. A second real lever worth investigating
+first: since exact attention already benefits from an efficient SDPA path
+*when no custom mask is given*, the bigger unlock might be finding a way to
+express Barnes-Hut's near/far split *without* a custom float attn_mask at
+all (e.g. two separate un-masked SDPA calls - one for the gathered near-field
+keys, one for the M monopoles - rather than concatenating and masking one
+combined tensor), which might let both calls use the fast path instead of
+forcing the slow one.

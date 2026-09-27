@@ -464,3 +464,31 @@ writeup: `experiments/h2-barnes-hut-tabiclv2/results/elo_readme.md`.
 closer to the actual 30-split protocol - an order-of-magnitude bigger
 compute commitment than this session's work, flagged as a decision point
 rather than started automatically.
+
+## 2026-09-27 — Built the sparse kernel: correctness verified, speed/memory win not achieved (honest)
+
+Built a real per-query gather-based Barnes-Hut attention kernel
+(`sparse_kernel.py`) instead of the masked-over-dense approach used
+everywhere else. Found and fixed 3 real bugs while validating it against the
+already-proven dense version (via a hooked capture of dense's actual
+attn_mask, not guessing): clustering done in the wrong (normalized) space,
+a missing `ssmax_layer` application, and - the actual root cause of the
+failure - an inverted far-field masking polarity. After all three fixes:
+exact match (1e-6) to the validated dense version.
+
+**Benchmarked speed/memory on the same RTX 3050 4GB this whole project has
+run on: the sparse kernel is slower and uses more memory than both plain
+exact attention and the dense-masked version, at every tested scale, and
+OOMs earlier than exact attention does.** Root cause: plain exact attention
+already benefits from an efficient (likely FlashAttention-style) SDPA path
+when no custom mask is supplied (near-flat memory 671->785MB across a 40x
+increase in N); introducing any custom float attn_mask forces a slower,
+more memory-hungry fallback, and my hand-rolled unfused gather/einsum
+implementation adds further real overhead on top of that. Full numbers and
+reasoning: `experiments/h2-barnes-hut-tabiclv2/analysis.md`.
+
+**Decision: report this honestly as correctness-yes/performance-no, not as
+a win.** A real performance win needs an actual fused kernel (Triton) or a
+restructuring that avoids triggering SDPA's slow custom-mask path entirely
+(e.g. two separate unmasked calls instead of one masked combined call) -
+both real, separate next steps, not done here.
