@@ -418,3 +418,24 @@ authoritative but rests on a baseline mismatch. Full writeup:
 `TabICLClassifier`'s actual preprocessing + `forward_with_cache`, and match
 TabArena's real fold protocol. Not a quick fix - a real chunk of work,
 flagged for a decision rather than pushed through silently.
+
+## 2026-09-27 — Built the real inference-path integration; corrected a wrong assumption along the way
+
+Traced the exact call chain properly (per instruction to "build that
+properly"): `predict_proba`'s default (`kv_cache=False`) never touches
+`forward_with_cache` - it calls `Encoder.forward`, the method already
+patched and validated. Built `patch_kvcache.py` for the real KV-cache path
+anyway (real, correct, kept as infrastructure for `kv_cache=True` users),
+but the actual fix for the baseline-mismatch problem was simpler: run
+through real preprocessing + the real `predict_proba()` ensemble path
+instead of the `_train_forward` bypass.
+
+**Result:** mean gap to the official cached TabICLv2 baseline dropped from
+an untrustworthy mismatch to 0.049 across 13 real TabArena-tiny datasets -
+most now genuinely close, one real unresolved outlier (MIC, 0.378 gap).
+Barnes-Hut vs vanilla via the real API: modest real cost (~1.1pp mean error
+increase), the expected shape for an approximation. Full detail:
+`experiments/h2-barnes-hut-tabiclv2/analysis.md`.
+
+**This is now trustworthy enough to compute a real Elo number against the
+official cached leaderboard - the next step, not yet done.**

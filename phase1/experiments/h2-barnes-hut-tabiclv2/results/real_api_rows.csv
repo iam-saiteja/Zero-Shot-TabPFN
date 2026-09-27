@@ -1,0 +1,14 @@
+dataset,ptype,n_train,our_vanilla,our_bh
+Fitness_Club,binary,1050,0.1701,0.1997
+Is-this-a-good-customer,binary,1206,0.2062,0.2267
+MIC,binary,1154,0.0919,0.0992
+Marketing_Campaign,binary,1568,0.0899,0.1044
+anneal,multiclass,628,0.0056,0.0072
+blood-transfusion-service-center,binary,523,0.255,0.2641
+credit-g,binary,700,0.1696,0.1617
+diabetes,binary,537,0.137,0.137
+hazelnut-spread-contaminant-detection,binary,1680,0.0029,0.0179
+maternal_health_risk,multiclass,709,0.3145,0.3461
+qsar-biodeg,binary,738,0.0599,0.0652
+seismic-bumps,multiclass,147,0.1956,0.1892
+website_phishing,multiclass,947,0.2125,0.2329

@@ -1,0 +1,32 @@
+Fitness_Club binary n=1050 vanilla 0.1701 bh 0.1997
+Is-this-a-good-customer binary n=1206 vanilla 0.2062 bh 0.2267
+MIC binary n=1154 vanilla 0.0919 bh 0.0992
+Marketing_Campaign binary n=1568 vanilla 0.0899 bh 0.1044
+anneal multiclass n=628 vanilla 0.0056 bh 0.0072
+blood-transfusion-service-center binary n=523 vanilla 0.255 bh 0.2641
+credit-g binary n=700 vanilla 0.1696 bh 0.1617
+diabetes binary n=537 vanilla 0.137 bh 0.137
+hazelnut-spread-contaminant-detection binary n=1680 vanilla 0.0029 bh 0.0179
+maternal_health_risk multiclass n=709 vanilla 0.3145 bh 0.3461
+qsar-biodeg binary n=738 vanilla 0.0599 bh 0.0652
+seismic-bumps multiclass n=147 vanilla 0.1956 bh 0.1892
+website_phishing multiclass n=947 vanilla 0.2125 bh 0.2329
+
+=== our vanilla vs official cached TABICLV2(default), via REAL predict_proba ===
+                                  dataset  official_cached  our_vanilla     gap
+0                            Fitness_Club           0.1907       0.1701  0.0206
+1                 Is-this-a-good-customer           0.2580       0.2062  0.0518
+2                                     MIC           0.4694       0.0919  0.3775
+3                      Marketing_Campaign           0.0597       0.0899  0.0302
+4                                  anneal           0.0321       0.0056  0.0265
+5        blood-transfusion-service-center           0.2548       0.2550  0.0002
+6                                credit-g           0.2107       0.1696  0.0411
+7                                diabetes           0.1548       0.1370  0.0178
+8   hazelnut-spread-contaminant-detection           0.0068       0.0029  0.0039
+9                    maternal_health_risk           0.3542       0.3145  0.0397
+10                            qsar-biodeg           0.0645       0.0599  0.0046
+11                          seismic-bumps           0.2144       0.1956  0.0188
+12                       website_phishing           0.2036       0.2125  0.0089
+
+mean abs gap: 0.0494 (was much larger with the _train_forward bypass)
+bh beats vanilla error on: 2/13

@@ -147,3 +147,44 @@ proper preprocessing before they can be included.
    compute, only tests correctness.
 3. Real datasets via `harness/` for genuine cached TabArena comparisons
    instead of another custom pilot script — the real test.
+
+## Built the real inference-path integration ("build that properly")
+
+**Correction of an earlier assumption:** traced the exact call chain and found
+`predict_proba`'s DEFAULT config (`kv_cache=False`, which is what every test
+so far used) never touches `forward_with_cache` at all — it calls
+`self.model_(...)` -> `TabICL.forward` -> `Encoder.forward`, the same method
+`patch.py`/`patch_nearfield.py` already patch and validated. The KV-cache
+path (`forward_with_cache`) is a separate, opt-in performance feature
+(`kv_cache=True`) for reusing cached K/V across repeated `predict_proba`
+calls on the same fit. Built `patch_kvcache.py` for that path anyway (real,
+correct, instance-scoped patch of the store/use cache phases with per-query
+near-field masking against cached centroids) since the work was already
+mostly done when the mistake was caught — kept as real infrastructure for
+when someone actually uses `kv_cache=True`, not the fix for the baseline
+mismatch.
+
+**The actual fix:** run through real preprocessing and the real
+`predict_proba()` ensemble path (`real_api_default_path.py`), applying the
+already-validated `patch_tf_icl_bh` to `clf.model_` after a normal `.fit()` —
+instead of the crude `_train_forward` + raw-feature bypass every earlier H2
+script used.
+
+**Result: mean gap to the official cached TabICLv2 baseline dropped from a
+wild, untrustworthy mismatch to 0.049** across the same 13 real
+TabArena-tiny datasets. Most are now genuinely close (blood-transfusion:
+0.0002, hazelnut: 0.0039, qsar-biodeg: 0.0046, website_phishing: 0.0089,
+diabetes: 0.0178, seismic-bumps: 0.0188, anneal: 0.0265) — within plausible
+range of a single split vs the official multi-fold average. **MIC remains a
+real, unexplained outlier** (0.378 gap) — not resolved, flagged rather than
+averaged away.
+
+**Barnes-Hut vs vanilla, via the real API:** a modest, real accuracy cost —
+mean error increase ~1.1pp across 13 datasets, 2/13 where it actually did
+slightly better (plausibly noise), no catastrophic failures. This is the
+expected shape for an approximation: real cost, not a wash and not a
+disaster.
+
+**This is now a foundation trustworthy enough to compute a real Elo number
+against the official cached leaderboard** — the next concrete step, not yet
+done.
