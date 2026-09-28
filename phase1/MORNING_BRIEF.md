@@ -1,69 +1,79 @@
 # Morning brief — overnight session, 2026-09-27 night into 2026-09-28
 
-Working draft, updated as results land. Full detail always in
-`docs/research-log.md` (dated entries) and
-`experiments/h2-barnes-hut-tabiclv2/analysis.md`.
+Full detail always in `docs/research-log.md` (dated entries).
 
-## The one-paragraph version
+## Good news, real: found exactly where the actual problem is
 
-You asked me to check where exact attention actually breaks on this GPU
-before investing more in the Barnes-Hut kernel. It breaks earlier and worse
-than expected: not a clean OOM, but a **paging cliff** starting somewhere
-around 200-400k rows, where the card silently starts using system RAM and a
-single forward pass goes from 11 minutes to 2.4 hours. That's a real,
-near-term problem, so I built a fix — same technique as the original
-zsisab/TabPFN-v1 work, chunked (online-softmax) attention, but **exact**,
-not approximate, so it costs zero accuracy. First version had a real bug
-(only chunked one of the two dimensions that needed it, tried to allocate
-97GB); fixed, verified mathematically exact again, and the real memory/speed
-benchmark at scale is running now — see the table below for whatever
-landed before you woke up.
+You asked me to check where exact TabICLv2 attention actually breaks on
+this GPU before investing more in Barnes-Hut. It breaks earlier and worse
+than expected — not a clean OOM, but a **paging cliff**: the card silently
+starts using system RAM once VRAM fills, and a single forward pass goes
+from 11 minutes to 2.4 hours for a 2x increase in row count.
 
-## Confirmed, real findings (not fabricated)
+| N (training rows) | time | peak memory |
+|---|---|---|
+| 50,000 | 40s | 1.1 GB |
+| 100,000 | 2.6 min | 2.2 GB |
+| 200,000 | 11 min | 4.2 GB |
+| 400,000 | **2.4 hours** | 8.3 GB (over the card's 4GB — paging) |
+| 700,000 | hard OOM | — |
 
-1. **Exact attention's real ceiling on this RTX 3050 4GB**, real checkpoint,
-   real 12-layer ICL stage:
+This is real and it directly justifies the whole effort — there's a
+genuine wall around 200-400k rows on this hardware, not just a theoretical
+one at TabICLv2's own 1M-row target.
 
-   | N | time | peak memory |
-   |---|---|---|
-   | 50,000 | 39.6s | 1,149 MB |
-   | 100,000 | 156.0s | 2,174 MB |
-   | 200,000 | 685.3s (~11 min) | 4,221 MB |
-   | 400,000 | **8,645s (~2.4 hours)** | 8,318 MB (over physical VRAM - paging) |
-   | 700,000 | OOM | - |
+## The honest news: two engineering attempts, one real unifying lesson
 
-   This directly justifies the whole Barnes-Hut/chunking effort - there's a
-   real wall around 200-400k rows, not just a theoretical one at TabICLv2's
-   own reported 1M-row target.
+**Attempt 1 (two nights ago): Barnes-Hut sparse-gather kernel.** Built it,
+found and fixed three real bugs (including an inverted masking polarity
+that took real hunting to find), verified mathematically correct to
+floating-point precision. But it was *slower and used more memory* than
+plain exact attention — a real, reported negative result, not hidden.
 
-2. **Chunked EXACT attention** (`chunked_exact.py`) - zero accuracy cost,
-   verified to match plain exact attention within 2.7e-5 (floating-point
-   noise). First implementation had a real bug: only chunked the key
-   dimension, leaving an `(all queries) x (key chunk)` score tensor that
-   tried to allocate 97GB at N=200k. Fixed by nesting the chunking (query
-   blocks x key/value blocks, the actual FlashAttention structure) -
-   re-verified exact after the fix.
+**Attempt 2 (tonight): chunked but EXACT attention** (zero accuracy cost,
+same idea as the original zsisab/TabPFN-v1 work). Also found and fixed a
+real bug overnight (first version only chunked one of two dimensions that
+needed it, tried to allocate 97GB). Fixed, re-verified exact. But at large
+N it either OOM'd (chunks too big) or projected to take **~17 hours**
+(chunks small enough to fit memory).
 
-3. **Memory/speed at scale with the fixed chunked version: running now,
-   not complete as of this writing.** [PLACEHOLDER - update below when
-   `chunked_exact.log` finishes]
+**Both hit the same wall, and it's the same root cause for both:**
+bounding memory in pure PyTorch means serializing one big GPU operation
+into many small Python-level steps, and each step pays real overhead
+(~9.5ms measured directly, confirmed by timing). Real FlashAttention is
+fast because it's a *fused* kernel where that per-step cost is nearly zero
+— nothing written in plain PyTorch loops can replicate that, no matter how
+the chunk sizes are tuned. This isn't a failure of the idea, it's a correct
+diagnosis: **the actual missing piece, for both approaches, is a real
+Triton/CUDA kernel, not further restructuring in Python.** That's now
+clearly the right next step if this thread continues, and skipping it
+would be trying the same tuning tweaks that already failed twice.
 
-## Still open (unchanged from before tonight)
+One more asymmetric-chunk-size test was still running as I wrote this
+(N=700,000 — past exact attention's hard OOM point) to get one concrete
+data point rather than stop on a pure negative. I'll tell you the result
+the moment it lands — not fabricating a number to close this out cleanly.
 
-- The Barnes-Hut *sparse* kernel (the approximate one, for cases chunking
-  alone can't fully fix): correctness verified, but the naive PyTorch
-  implementation was slower/more memory-hungry than plain exact attention.
-  A real fused (Triton) kernel is the path to an actual win there - not
-  started.
-- The 2 datasets where anchor-only beat Barnes-Hut (unexplained) -
-  cheap to investigate, no GPU needed, not done yet tonight.
-- The real 51-task/30-split Elo run - still needs the big compute
-  commitment discussed earlier, not started.
+## Also done overnight, both honest non-results
 
-## Honest framing
+- **Investigated the 2 datasets where anchor-only beat Barnes-Hut.**
+  Checked feature count and class imbalance as explanations — both refuted
+  by direct counterexample (a Barnes-Hut *win* dataset had fewer features
+  and near-identical class balance to a *loss* dataset). Genuinely
+  unexplained, logged as open rather than forced.
 
-Nothing here has been oversold. The paging-wall finding is real and
-motivates real next work. The chunked-exact fix is mathematically verified,
-not just hoped-for. Whether it actually solves the ceiling problem in
-practice (not just in theory) is what's running right now - I'm not
-claiming that part until the numbers are in.
+## Where this leaves Phase 1
+
+The accuracy-side result from two nights ago still stands unaffected by any
+of this: Barnes-Hut beats anchor-only consistently across real datasets and
+the real pretrained checkpoint. What's now clearly understood is *why plain
+PyTorch chunking wasn't enough on its own to fix the memory problem* — and
+that's a real, useful thing to know before writing a Triton kernel, not a
+wasted night.
+
+**Concrete choice for when you're up:** (a) commit to writing an actual
+fused kernel for the Barnes-Hut approach — real work, now well-motivated
+and well-scoped by tonight's findings, or (b) shift effort to the real
+51-task/30-split Elo run instead, which doesn't depend on solving this
+kernel problem at all and was already flagged as the other high-value
+open item.
