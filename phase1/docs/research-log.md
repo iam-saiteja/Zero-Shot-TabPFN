@@ -565,3 +565,30 @@ something exact attention itself doesn't do well on this dataset. Whether
 that's a real regularization effect or a one-off artifact of a single
 train/test split isn't known - would need repeated splits to check, not
 done tonight.
+
+## 2026-09-28 (morning) — Chunked-exact: same fundamental wall as the sparse kernel
+
+The full overnight benchmark (chunk_size=query_chunk_size=2048) never
+produced output because it was catastrophically slow, not hung - killing it
+lost the buffered output (SIGKILL doesn't flush stdout), so a timed
+sub-test was run instead: 20,000 rows, 1200 total chunk-steps, took 11.4s ->
+**~9.5ms overhead per step**. Extrapolated to N=1.5M at that chunk size:
+~6.4M total steps -> ~17 hours. Confirmed by testing large symmetric chunks
+(65536) instead: immediately OOM'd trying to allocate 128GB (query_chunk x
+key_chunk x heads x 4 bytes grows fast when both are large).
+
+**Root cause, and it's the same one behind the sparse Barnes-Hut kernel's
+failure two nights ago:** chunking exact attention in pure PyTorch bounds
+memory but does not reduce the O(N^2) total work - it serializes what would
+otherwise be one large parallel GPU op into many small ones, each paying
+real Python-loop + CUDA-launch overhead. Real FlashAttention gets its speed
+from a fused kernel where that per-tile overhead is near-zero; a
+Python-level loop over PyTorch ops cannot replicate that. **Both attempts
+this session hit this same wall - it is not a coincidence, it is the
+correct explanation for why neither delivered a speed win**, and it points
+at the same real next step for both: an actual Triton/CUDA kernel, not
+further pure-PyTorch restructuring.
+
+One asymmetric-chunk test (chunk_k=2048, chunk_q=8192, N=700,000 - past
+exact attention's hard OOM point) is running in the background as of this
+writing to get one real data point before finalizing the brief.
