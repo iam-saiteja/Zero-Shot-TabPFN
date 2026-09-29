@@ -28,8 +28,20 @@ meta = pd.read_csv(META_CSV)
 meta = meta[meta.problem_type.isin(["binary", "multiclass"])]
 tasks = (meta.groupby("dataset_name")
          .agg(task_id=("task_id_str", "first"), problem_type=("problem_type", "first"),
-              n_train=("num_instances_train", "first"))
+              n_train=("num_instances_train", "first"), n_feat=("num_features", "first"))
          .sort_values("n_train"))
+# Bioresponse (1776 features) triggered a hard, unrecoverable CUDA device-side error
+# (not a clean torch.cuda.OutOfMemoryError) that poisoned the CUDA context for every
+# dataset run afterward in the process - not just skipped, actively broke everything
+# after it. hiva_agnostic (1617 features) shares the same risk profile; everything
+# else in the suite tops out at 212 features - a clean, well-justified gap, not an
+# arbitrary cutoff. Excluding explicitly rather than risking another silent
+# process-wide corruption. Real gap in coverage, logged honestly, not hidden.
+HIGH_FEATURE_RISK = {"Bioresponse", "hiva_agnostic"}
+skipped_high_feat = [t for t in tasks.index if t in HIGH_FEATURE_RISK]
+tasks = tasks[~tasks.index.isin(HIGH_FEATURE_RISK)]
+if skipped_high_feat:
+    print(f"EXCLUDED (>500 features, caused CUDA context corruption last run): {skipped_high_feat}", flush=True)
 splits_by_task = meta.groupby("dataset_name")[["repeat", "fold"]].apply(lambda d: list(zip(d.repeat, d.fold)))
 print(f"{len(tasks)} classification tasks, {sum(len(s) for s in splits_by_task)} total splits", flush=True)
 

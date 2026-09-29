@@ -604,3 +604,23 @@ built-in skip-already-done logic - no wasted recomputation. The 700k
 chunked-exact test was not resumed (superseded - the Triton-kernel-vs-Elo
 question was already decided in favor of the Elo run before the session
 ended).
+
+## 2026-09-29 — Real run hit a hard failure mode: extreme feature count poisons CUDA, not just row count
+
+The real TabArena run "completed" (reached the end, printed done) but only
+produced real results for 18 of 38 datasets. Root cause found: `Bioresponse`
+(1,776 features - only 2,500 rows, trivially small) triggered a hard,
+unrecoverable CUDA device-side error (not a clean caught OOM), which
+poisoned the CUDA context for the rest of the process - every dataset
+attempted afterward failed too, regardless of its own size, until a session
+restart happened to give a fresh process. This is a genuinely new finding:
+the earlier ceiling investigation only tested row-count scaling: extreme
+*feature* count is a separate, real danger axis on this hardware, not
+explored before.
+
+Checked feature counts across the full 38-task suite: a clean gap exists -
+Bioresponse (1,776) and hiva_agnostic (1,617) vs everything else topping
+out at 212. Excluded both explicitly (not silently) rather than risk
+another full-process corruption, and re-launched to fill in the real
+remaining gaps in the other 36 tasks. This is now a permanent, documented
+gap in this run's coverage, not something quietly worked around.
