@@ -592,3 +592,15 @@ further pure-PyTorch restructuring.
 One asymmetric-chunk test (chunk_k=2048, chunk_q=8192, N=700,000 - past
 exact attention's hard OOM point) is running in the background as of this
 writing to get one real data point before finalizing the brief.
+
+## 2026-09-29 — Session restarted; real TabArena run resumed from checkpoint
+
+Previous session ended abruptly (process killed), stopping the real
+TabArena v0.1 run and the leftover 700k chunked-exact test. Real progress
+had survived to disk: 1,122 rows (374 dataset-repeat-fold combinations x 3
+methods) across 14 of 38 classification datasets, written incrementally by
+the script's resumable design. Resumed cleanly using the same script's
+built-in skip-already-done logic - no wasted recomputation. The 700k
+chunked-exact test was not resumed (superseded - the Triton-kernel-vs-Elo
+question was already decided in favor of the Elo run before the session
+ended).
