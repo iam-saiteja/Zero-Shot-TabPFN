@@ -636,3 +636,9 @@ writes, fixing a real duplicate-row bug an earlier read-concat-overwrite
 draft would have had). Core fit/predict/patch logic unchanged from the
 already-validated single-process version - only the process boundary is
 new. Smoke-testing on one dataset before relaunching the full run.
+
+## 2026-09-29 — Subprocess-isolated run launched, smoke test passed cleanly
+
+Smoke test on anneal (30 splits, subprocess worker): exactly 90 rows (30x3
+methods), zero duplicates, correct schema - confirms the append-only CSV
+fix works and the isolation refactor is sound. Launched the full run.
