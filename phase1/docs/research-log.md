@@ -624,3 +624,15 @@ out at 212. Excluded both explicitly (not silently) rather than risk
 another full-process corruption, and re-launched to fill in the real
 remaining gaps in the other 36 tasks. This is now a permanent, documented
 gap in this run's coverage, not something quietly worked around.
+
+## 2026-09-29 — Refactored to subprocess-per-dataset isolation
+
+Two CUDA-poisoning incidents in one process (extreme-feature dataset, then
+an ordinary one after ~30 datasets had already run) made clear the fix
+isn't blacklisting datasets - it's isolating each dataset's CUDA context.
+Refactored: `real_tabarena_run.py` is now a thin orchestrator that spawns
+`tabarena_worker.py` as a fresh subprocess per dataset (append-only CSV
+writes, fixing a real duplicate-row bug an earlier read-concat-overwrite
+draft would have had). Core fit/predict/patch logic unchanged from the
+already-validated single-process version - only the process boundary is
+new. Smoke-testing on one dataset before relaunching the full run.
