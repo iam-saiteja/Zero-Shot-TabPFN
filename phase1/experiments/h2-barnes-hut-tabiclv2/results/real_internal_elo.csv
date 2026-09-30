@@ -1,0 +1,4 @@
+method,elo,elo+,elo-
+"TabICLv2 (ours, vanilla)",1440.7,1165.9,137.2
+TabICLv2+barnes_hut (ours),865.8,77.4,581.2
+TabICLv2+anchor (ours),693.5,126.9,599.5
