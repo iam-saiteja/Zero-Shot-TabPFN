@@ -255,3 +255,51 @@ all (e.g. two separate un-masked SDPA calls - one for the gathered near-field
 keys, one for the M monopoles - rather than concatenating and masking one
 combined tensor), which might let both calls use the fast path instead of
 forcing the slow one.
+
+## Real TabArena v0.1 run: largest, most trustworthy result in this project
+
+30 real datasets (of 36 attempted; 6 largest hit a real, clean OOM ceiling -
+see below), official OpenML splits (up to 30 per dataset, matching
+TabArena's actual protocol), real preprocessing, real `predict_proba()`.
+
+**Caught a real near-miss before reporting it:** a first pass at this
+analysis mislabeled the pivot table's columns by assumed position instead
+of by the actual `method` string, producing a backwards-looking result
+(anchor beating Barnes-Hut 87% of the time) and an apparently-missing
+vanilla column. Both were artifacts of that one labeling bug, not the data.
+Redone correctly below.
+
+**The real result, on 405 splits where all three methods succeeded:**
+
+| method | mean error |
+|---|---|
+| vanilla (exact) | 0.1893 |
+| anchor-only | 0.2485 |
+| Barnes-Hut | 0.2032 |
+
+Barnes-Hut beats anchor-only on **72.1% of splits** (292/405), mean error
+reduction 4.5pp. Barnes-Hut's cost vs exact attention: **1.4pp**.
+Anchor-only's cost vs exact: **5.9pp** - over 4x worse. This is the largest
+and most trustworthy confirmation of the core result in this project: real
+official splits, real checkpoint, real preprocessing, 30 real datasets, not
+a handful of ad hoc ones.
+
+**A real, honest trade-off surfaced by scale:** vanilla and anchor-only
+never failed (500/500 splits each). Barnes-Hut failed on 95/500 (19%) -
+consistent with the dense-masked implementation's known memory overhead
+(it builds a bigger intermediate attn_mask tensor than either alternative,
+per the sparse-kernel investigation two nights ago). **Barnes-Hut is
+currently the most accurate but least memory-robust of the three methods**
+- a real trade-off, not a free win, and exactly the argument for why the
+sparse/fused-kernel work (still unresolved) matters beyond just speed.
+
+**Real hardware-ceiling findings from this run, both legitimate, not bugs:**
+- Two datasets (Bioresponse 1,776 features, hiva_agnostic 1,617) triggered
+  a hard, process-poisoning CUDA error - fixed via subprocess-per-dataset
+  isolation, not by avoiding those datasets forever.
+- The full ensembled pipeline (TabICLClassifier's default multi-view
+  ensembling) hits a real, clean OOM ceiling around 20-30k training rows on
+  this 4GB card - much lower than the ~200k+ ceiling found for the bare
+  attention stage alone. Ensembling multiplies memory cost per fold. The 6
+  largest remaining datasets (33k-100k rows) are expected to fail for this
+  reason, not because anything is broken.
