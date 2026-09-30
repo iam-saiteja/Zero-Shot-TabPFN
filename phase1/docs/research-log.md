@@ -642,3 +642,48 @@ new. Smoke-testing on one dataset before relaunching the full run.
 Smoke test on anneal (30 splits, subprocess worker): exactly 90 rows (30x3
 methods), zero duplicates, correct schema - confirms the append-only CSV
 fix works and the isolation refactor is sound. Launched the full run.
+
+## 2026-09-30 — FlexAttention tried and diagnosed as a dead end for this specific mask
+
+User asked directly whether a newer attention mechanism (ISAB, or something
+else) could solve what two hand-rolled kernels (sparse gather, chunked
+online-softmax) both failed to solve: real speed/memory savings from the
+Barnes-Hut approximation. Researched and found PyTorch's built-in
+FlexAttention (`torch.nn.attention.flex_attention`, already present in the
+installed torch 2.5.1) - a `torch.compile`-fused, block-sparse attention
+API, the actual "real kernel" both prior attempts were missing.
+
+Implemented the Barnes-Hut near/far mask as `mask_mod`/`score_mod` closures
+and ran it through `create_block_mask` + compiled `flex_attention`
+(`flex_attention_kernel.py`, `flex_kernel_test.py`). After five real,
+sequential environment fixes (triton-windows version had to be found via
+PyPI's JSON API since guessed strings didn't exist; missing setuptools;
+head_dim=8 too small for Triton, bumped test model to embed_dim=64), it
+ran to completion with two findings:
+
+- **Correctness: exact.** Max abs diff vs the already-validated dense-masked
+  reference = 0.000000. The mask_mod/score_mod logic is provably right.
+- **Memory: worse than plain exact attention, at every scale tried.** OOM at
+  50k rows (requesting 18.76 GiB, where exact attention needs 215MB) up to
+  700k rows (requesting 3.65 TB). The requested-allocation size scales
+  roughly with N², not with the intended sparse fraction.
+
+Root-caused by isolating just the `create_block_mask` call: the OOM
+traces to FlexAttention's own `create_mask` step, which evaluates
+`mask_mod` under `vmap` over the *entire* dense (Q_LEN x KV_LEN) grid to
+decide block-level sparsity, before any actual attention runs. That's fine
+when the predicate is a cheap pointwise comparison (causal, sliding
+window) - but our predicate does data-dependent gathers
+(`is_top[b, q_idx, cluster]`, `assign[b, kv_idx]`), and under `vmap` those
+gathers materialize a dense (T, N+M)-shaped intermediate per batch just to
+*determine* sparsity. Determining sparsity ends up costing exactly what
+computing dense attention would have cost - the mechanism that's supposed
+to make this cheap doesn't apply to this class of mask.
+
+**Conclusion:** this is a structural limitation of FlexAttention for
+per-instance, data-dependent cluster masks (as opposed to structural masks
+like causal/block-diagonal), not a bug to keep chasing. This is the third
+independent approach (hand-rolled sparse kernel, hand-rolled chunked exact
+attention, FlexAttention) to fail at the same underlying goal - real
+speed/memory savings from Barnes-Hut on this hardware/stack - each for a
+different, honestly-diagnosed reason. Stopping this sub-thread here.
