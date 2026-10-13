@@ -687,3 +687,118 @@ independent approach (hand-rolled sparse kernel, hand-rolled chunked exact
 attention, FlexAttention) to fail at the same underlying goal - real
 speed/memory savings from Barnes-Hut on this hardware/stack - each for a
 different, honestly-diagnosed reason. Stopping this sub-thread here.
+
+## 2026-09-30 — Track B started: real fine-tune of TabICLv2 on real, held-out data
+
+User asked to move to Track B (fine-tuning) after three independent kernel
+approaches to speeding up Barnes-Hut attention all failed. Scope per
+`research/finetune-existing-models.md`: fine-tune once on a corpus disjoint
+from the 30-dataset real eval set already used for the Barnes-Hut baseline,
+then re-evaluate zero-shot on that same held-out set - the only way this
+stays a legitimate zero-shot comparison rather than a "tuned" entry.
+
+**Corpus:** the 6 real TabArena-v0.1 classification tasks not in the
+30-dataset eval set (kddcup09_appetency, Diabetes130US, APSFailure, SDSS17,
+customer_satisfaction_in_airline, GiveMeSomeCredit) - zero overlap with
+eval, same distribution family, none with the extreme feature counts that
+caused CUDA poisoning earlier.
+
+**Real feasibility finding (not assumed, tested):** the checkpoint fits
+easily for inference (27.6M params, 110MB fp32), but a first real backward
+pass hard-OOM'd on this 4GB card even at ~1k rows - gradient tracking
+retains every layer's activations simultaneously (col embedder + row
+interactor + ICL predictor, 18 blocks total), unlike inference which
+discards them immediately. Fixed with the model's own built-in gradient
+checkpointing (`recompute=True`, already implemented via
+`torch.utils.checkpoint` in `encoders.py`/`interaction.py`, just not the
+default in the released checkpoint's config - safe to override at load
+time since it's a pure forward-mode toggle, not part of the trained
+weights). After the fix: 2.8GB peak, ~1.8s/step, ran cleanly.
+
+**Launched:** 1500-step episodic fine-tune (`finetune.py`), AdamW lr=1e-5,
+episodes sampled from the 6-dataset corpus (subsample <=1024 rows, random
+train/query split each step, cross-entropy on query rows - matches the
+official trainer's own objective in `tabicl/train/_run.py`). Checkpointed
+every 250 steps for resumability. ETA ~45 minutes at observed throughput.
+Next: re-run the same real TabArena eval harness (`tabarena_worker.py`'s
+vanilla path) against the fine-tuned checkpoint on the original 30 held-out
+datasets, compute real Elo, report the honest delta against the existing
+vanilla baseline (1440.7).
+
+## 2026-09-30 — Fine-tune run completed; launching real held-out re-evaluation
+
+1500-step episodic fine-tune finished cleanly: 115.4 minutes actual (the
+~40min estimate from throughput at step 20 was wrong - steps on the
+wider-feature datasets in the corpus, kddcup09_appetency at 212 features
+and APSFailure at 170, ran slower than the early steps that estimate was
+based on; noting the bad estimate rather than quietly dropping it).
+Training loss/accuracy stayed stable throughout (loss ~0.10-0.17, no
+divergence, no collapse) - a good sign the run didn't break anything, but
+these are in-episode diagnostics on the fine-tuning corpus itself, not
+evidence of real improvement. Checkpoint saved:
+`results/finetuned_ckpts/tabicl_v2_ft_step1500.ckpt`.
+
+Launching the real test now: `finetune_eval_run.py` evaluates this
+checkpoint on the exact same 30-dataset, real official-split held-out set
+already used for the Barnes-Hut baseline (vanilla Elo 1440.7). Only that
+number - a real Elo delta on data the fine-tune never saw - decides whether
+this was worth doing.
+
+## 2026-09-30 — Real bug: relative checkpoint path silently produced zero eval results
+
+Launched the fine-tuned-checkpoint evaluation with a checkpoint path relative
+to the repo root. `finetune_eval_run.py` spawns `finetune_eval_worker.py` as
+a subprocess with `cwd=HERE` (the code directory, not the repo root) - same
+isolation pattern as the original run - so that relative path resolved to
+the wrong location. Every one of 30 datasets x ~10 splits failed immediately
+at `TabICLClassifier(model_path=...)` construction with a clear
+"Checkpoint not found" ValueError, caught by the existing per-split
+exception handling (by design, so one bad split doesn't kill a dataset) and
+silently skipped - the whole run finished (exit 0, "finetune eval done")
+having written zero real rows. Caught by checking the output CSV directly
+(didn't exist) rather than trusting the "done" message - the same
+discipline that caught the pivot-labeling bug earlier. No compute was
+wasted (failures were immediate, not mid-fit). Fix: pass an absolute
+checkpoint path. Re-running now.
+
+## 2026-10-13 — Track B result, resolved after a session gap: fine-tuning made it worse everywhere
+
+Session restarted after ~13 days; the fine-tuned-checkpoint evaluation
+launched on 2026-09-30 had actually finished correctly before the gap
+(all 30 held-out datasets present with the right split counts - 17 x 30
+splits, 13 x 9 splits, matching the official protocol), but the Elo
+computation was never run before the session ended. The old `.venv-tabicl`
+/ `.venv-harness` environments were gone after the gap (not persisted), so
+ran a direct pandas comparison instead of rebuilding bencheval first -
+cheaper, and the signal is unambiguous either way.
+
+**Real result: the 1500-step fine-tune (lr=1e-5, episodic, on the 6-dataset
+disjoint corpus) made TabICLv2 worse on every single one of the 29 matched
+held-out datasets (505 splits).** Fine-tuned checkpoint won only 9.5% of
+splits. Mean error rose from 0.187 (vanilla) to 0.257 (fine-tuned). A few
+datasets took catastrophic hits: maternal_health_risk (0.40 -> 0.98),
+Amazon_employee_access (0.15 -> 0.47), in_vehicle_coupon_recommendation
+(0.16 -> 0.39), bank-marketing (0.24 -> 0.40). The smallest/least-damaged
+cases (splice, hazelnut-spread-contaminant-detection, NATICUSdroid) still
+lost, just barely.
+
+**Honest read:** this is catastrophic forgetting, not a wash. Fine-tuning
+on a narrow 6-dataset corpus (even at lr=1e-5, even with gradient
+checkpointing keeping training numerically stable throughout - loss/acc
+looked fine during training itself) overwrote general in-context-learning
+behavior that the original large-scale pretraining gave the checkpoint.
+Training-time diagnostics (stable loss ~0.10-0.17) were never going to
+catch this - they only measured performance on the same narrow corpus the
+model was overfitting to, exactly the risk flagged in
+`research/finetune-existing-models.md`'s "keep the fine-tune corpus and
+eval corpus disjoint" section, just not sufficient alone to prevent this.
+
+**Decision: Track B as naive full-fine-tune is closed, negative result.**
+Combined with Barnes-Hut's three independently-failed kernel-speed attempts
+(sparse gather, chunked exact, FlexAttention) and its accuracy ceiling
+(cannot exceed exact attention by construction), both standing research
+tracks on TabICLv2 are now closed with honest negative results. Not
+re-attempting fine-tuning without first addressing *why* it forgot (e.g.
+much smaller LR, far fewer steps, explicit regularization toward the
+original weights, or a fundamentally different corpus/objective) - that's
+a new question, not a retry of this run.
